@@ -3,6 +3,7 @@
 
 #![no_std]
 #![no_main]
+#![feature(int_from_ascii)]
 
 use core::str::from_utf8;
 
@@ -27,6 +28,9 @@ use serde::Deserialize;
 use serde_json_core::from_slice;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
+
+mod buf_reader;
+mod withrottle;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
