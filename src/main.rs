@@ -5,21 +5,28 @@
 #![no_main]
 #![feature(int_from_ascii)]
 
+use core::cell::OnceCell;
+use core::net::{Ipv4Addr, SocketAddr};
 use core::str::from_utf8;
 
 use cyw43::JoinOptions;
-use cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER};
+use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_net::dns::DnsSocket;
+use embassy_net::dns::{DnsQueryType, DnsSocket};
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
-use embassy_net::{Config, StackResources};
+use embassy_net::{Config, IpAddress, StackResources};
 use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
-use embassy_time::{Duration, Timer};
+use embassy_rp::pio_programs::rotary_encoder::{Direction, PioEncoder, PioEncoderProgram};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::{Channel, TrySendError};
+use embassy_sync::signal::Signal;
+use embassy_time::{Duration, Instant, TimeoutError, Timer};
+use embedded_nal_async::TcpConnect;
 use reqwless::client::HttpClient;
 // Uncomment these for TLS requests:
 // use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
@@ -27,17 +34,139 @@ use reqwless::request::Method;
 use serde::Deserialize;
 use serde_json_core::from_slice;
 use static_cell::StaticCell;
+use strum::{EnumCount, EnumIter, VariantArray};
 use {defmt_rtt as _, panic_probe as _};
 
+use crate::profile::{Address, Function, Profile};
+use crate::withrottle::{WiThrottleClient, WiThrottleError};
+
 mod buf_reader;
+mod profile;
 mod withrottle;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
 });
 
-const WIFI_NETWORK: &str = "ssid"; // change to your network SSID
-const WIFI_PASSWORD: &str = "pwd"; // change to your network password
+pub type CancellationSignal = Signal<CriticalSectionRawMutex, ()>;
+
+const WIFI_NETWORK: &str = "parkerhouse"; // change to your network SSID
+const WIFI_PASSWORD: &str = "password"; // change to your network password
+
+async fn submit_request(request: WiThrottleRequest) {
+    CANCELLATION_SIGNAL.signal(());
+    if let Err(err) = WITHROTTLE_COMMAND_CHANNEL.try_send(request) {
+        // Just in case they add variants later on, I want to handle them too...
+        let request = match err {
+            TrySendError::Full(request) => request,
+        };
+        error!(
+            "Failed to send request {}... We're probably running out of space.",
+            request
+        );
+    }
+}
+
+#[repr(u8)]
+#[derive(Default, Format, VariantArray, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+pub enum ThrottlePosition {
+    #[default]
+    Idle,
+    Notch1,
+    Notch2,
+    Notch3,
+    Notch4,
+    Notch5,
+    Notch6,
+    Notch7,
+    Notch8,
+}
+
+#[repr(u8)]
+#[derive(Default, Format, VariantArray, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+pub enum ReverserPosition {
+    Reverse,
+    #[default]
+    Neutral,
+    Forwards,
+}
+
+#[embassy_executor::task]
+async fn read_throttle_encoder(mut encoder: PioEncoder<'static, PIO0, 1>) {
+    let mut position = ThrottlePosition::default();
+    loop {
+        position = match encoder.read().await {
+            Direction::Clockwise if position < ThrottlePosition::Notch8 => {
+                ThrottlePosition::VARIANTS[position as usize + 1]
+            }
+            Direction::CounterClockwise if position > ThrottlePosition::Idle => {
+                ThrottlePosition::VARIANTS[position as usize - 1]
+            }
+            _direction => {
+                error!(
+                    "Encoder is turning, but we are already in {}! Did we start desynced? Ignoring.",
+                    position
+                );
+                position
+            }
+        };
+        submit_request(WiThrottleRequest::SetThrottle(position)).await
+    }
+}
+
+#[embassy_executor::task]
+async fn read_reverser_encoder(mut encoder: PioEncoder<'static, PIO0, 2>) {
+    let mut position = ReverserPosition::default();
+    loop {
+        position = match encoder.read().await {
+            Direction::Clockwise if position < ReverserPosition::Forwards => {
+                ReverserPosition::VARIANTS[position as usize + 1]
+            }
+            Direction::CounterClockwise if position > ReverserPosition::Reverse => {
+                ReverserPosition::VARIANTS[position as usize - 1]
+            }
+            direction => {
+                error!(
+                    "Encoder is turning, but we are already in {}! Did we start desynced? Ignoring.",
+                    position
+                );
+                position
+            }
+        };
+        submit_request(WiThrottleRequest::SetReverser(position)).await
+    }
+
+    // let mut reverser: usize = 1;
+    // loop {
+    //     info!("Count: {}", count);
+    //     match count.checked_add_signed(match encoder.read().await {
+    //         Direction::Clockwise => 1,
+    //         Direction::CounterClockwise => -1,
+    //     }) {
+    //         Some(value) => count = value,
+    //         None => {
+    //             error!("Encoder running backwards?");
+    //         }
+    //     }
+    // }
+}
+
+#[embassy_executor::task]
+async fn withrottle_heartbeat(rx: &'static Signal<CriticalSectionRawMutex, Instant>) -> ! {
+    let mut deadline = rx.wait().await;
+    loop {
+        match embassy_time::with_deadline(deadline, rx.wait()).await {
+            Ok(new_deadline) => {
+                deadline = new_deadline;
+            }
+            Err(TimeoutError) => {
+                submit_request(WiThrottleRequest::Heartbeat).await;
+                // Don't do anything till we have a new one
+                deadline = Instant::MAX;
+            }
+        }
+    }
+}
 
 #[embassy_executor::task]
 async fn cyw43_task(
@@ -51,6 +180,18 @@ async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'sta
     runner.run().await
 }
 
+#[derive(Format)]
+pub enum WiThrottleRequest {
+    SetFunctionState(usize, bool),
+    SetThrottle(ThrottlePosition),
+    SetReverser(ReverserPosition),
+    Heartbeat,
+}
+
+static WITHROTTLE_COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, WiThrottleRequest, 16> =
+    Channel::new();
+static CANCELLATION_SIGNAL: CancellationSignal = CancellationSignal::new();
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     info!("Hello World!");
@@ -58,14 +199,14 @@ async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     let mut rng = RoscRng;
 
-    let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
-    let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
+    // let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
+    // let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
     // To make flashing faster for development, you may want to flash the firmwares independently
     // at hardcoded addresses, instead of baking them into the program with `include_bytes!`:
     //     probe-rs download 43439A0.bin --binary-format bin --chip RP2040 --base-address 0x10100000
     //     probe-rs download 43439A0_clm.bin --binary-format bin --chip RP2040 --base-address 0x10140000
-    // let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 230321) };
-    // let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
+    let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 230321) };
+    let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
 
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);
@@ -80,6 +221,13 @@ async fn main(spawner: Spawner) {
         p.PIN_29,
         p.DMA_CH0,
     );
+
+    let prg = PioEncoderProgram::new(&mut pio.common);
+    let throttle_encoder = PioEncoder::new(&mut pio.common, pio.sm1, p.PIN_3, p.PIN_4, &prg);
+    // This one is backwards!
+    let reverser_encoder = PioEncoder::new(&mut pio.common, pio.sm2, p.PIN_5, p.PIN_6, &prg);
+    defmt::unwrap!(spawner.spawn(read_throttle_encoder(throttle_encoder)));
+    defmt::unwrap!(spawner.spawn(read_reverser_encoder(reverser_encoder)));
 
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let state = STATE.init(cyw43::State::new());
@@ -131,6 +279,33 @@ async fn main(spawner: Spawner) {
 
     // And now we can use it!
 
+    static LINE_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
+    let line_buffer = LINE_BUFFER.init([0; 4096]);
+    static PROFILES: StaticCell<[Profile; 10]> = StaticCell::new();
+    let profiles = PROFILES.init(core::array::from_fn(|_| Profile {
+        address: Address::Long(0x1654),
+        functions: [
+            Some(Function {
+                label: defmt::unwrap!("Bell".try_into()),
+            }),
+            Some(Function {
+                label: defmt::unwrap!("Horn".try_into()),
+            }),
+            Some(Function {
+                label: defmt::unwrap!("Amore".try_into()),
+            }),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ],
+    }));
+
+    static HEARTBEAT_DEADLINE: Signal<CriticalSectionRawMutex, Instant> = Signal::new();
+    defmt::unwrap!(spawner.spawn(withrottle_heartbeat(&HEARTBEAT_DEADLINE)));
+
     loop {
         let mut rx_buffer = [0; 4096];
         // Uncomment these for TLS requests:
@@ -143,82 +318,95 @@ async fn main(spawner: Spawner) {
         // Uncomment these for TLS requests:
         // let tls_config = TlsConfig::new(seed, &mut tls_read_buffer, &mut tls_write_buffer, TlsVerify::None);
 
-        // Using non-TLS HTTP for this example
-        let mut http_client = HttpClient::new(&tcp_client, &dns_client);
-        let url = "http://httpbin.org/json";
-        // For TLS requests, use this instead:
-        // let mut http_client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
-        // let url = "https://httpbin.org/json";
+        let withrottle_servers = dns_client
+            .query("_withrottle._tcp.local", DnsQueryType::A)
+            .await
+            .unwrap_or_else(|_| {
+                defmt::unwrap!(heapless::Vec::from_slice(&[IpAddress::Ipv4(
+                    Ipv4Addr::new(192, 168, 32, 120),
+                )]))
+            });
+        info!("Found withrottle servers: {}", withrottle_servers);
+        let withrottle_socket = match withrottle_servers.first() {
+            Some(&address) => match tcp_client
+                .connect(SocketAddr::new(address.into(), 12090))
+                .await
+            {
+                Ok(socket) => {
+                    info!("Connected to withrottle sever! {}", address);
+                    socket
+                }
+                Err(err) => {
+                    error!(
+                        "Couldn't connect to withrottle server at {}: {}",
+                        address, err
+                    );
+                    continue;
+                }
+            },
+            _ => continue,
+        };
+        let hardware_address = stack.hardware_address();
+        let hardware_address_bytes = hardware_address.as_bytes();
+        let mut id = [0u8; 32];
+        let id = base16ct::lower::encode(&hardware_address_bytes, &mut id).unwrap();
 
-        info!("connecting to {}", &url);
-
-        let mut request = match http_client.request(Method::GET, url).await {
-            Ok(req) => req,
-            Err(e) => {
-                error!("Failed to make HTTP request: {:?}", e);
-                Timer::after(Duration::from_secs(5)).await;
+        let mut withrottle_client = match WiThrottleClient::new(
+            withrottle_socket,
+            id,
+            &profiles[0],
+            line_buffer,
+            &HEARTBEAT_DEADLINE,
+        )
+        .await
+        {
+            Ok(client) => client,
+            Err(err) => {
+                error!("Failed to connect to withrottle server: {}", err);
                 continue;
             }
         };
 
-        let response = match request.send(&mut rx_buffer).await {
-            Ok(resp) => resp,
-            Err(e) => {
-                error!("Failed to send HTTP request: {:?}", e);
-                Timer::after(Duration::from_secs(5)).await;
-                continue;
+        loop {
+            while let Ok(message) = WITHROTTLE_COMMAND_CHANNEL.try_receive() {
+                info!("Got a message from the command channel: {}", message);
+                let result = async {
+                    match message {
+                        WiThrottleRequest::SetFunctionState(function_id, state) => {
+                            &withrottle_client;
+                            defmt::info!("Set the state with the withrottle client");
+                        }
+                        WiThrottleRequest::SetReverser(direction) => {
+                            withrottle_client.set_direction(direction).await?;
+                        }
+                        WiThrottleRequest::SetThrottle(position) => {
+                            withrottle_client.set_speed((position as u8) * 3).await?;
+                        }
+                        WiThrottleRequest::Heartbeat => {
+                            withrottle_client.heartbeat().await?;
+                        }
+                    }
+                    Ok::<_, WiThrottleError>(())
+                }
+                .await;
+                match result {
+                    Ok(()) => {}
+                    Err(err) => {
+                        error!("Failed to handle request {}! {}", message, err);
+                    }
+                }
             }
-        };
-
-        info!("Response status: {}", response.status.0);
-
-        let body_bytes = match response.body().read_to_end().await {
-            Ok(b) => b,
-            Err(_e) => {
-                error!("Failed to read response body");
-                Timer::after(Duration::from_secs(5)).await;
-                continue;
+            match withrottle_client
+                .handle_line(Some(&CANCELLATION_SIGNAL))
+                .await
+            {
+                Ok(()) | Err(WiThrottleError::Cancelled) => {}
+                Err(err) => {
+                    error!("WiThrottle client failed: {}", err);
+                    break;
+                }
             }
-        };
-
-        let body = match from_utf8(body_bytes) {
-            Ok(b) => b,
-            Err(_e) => {
-                error!("Failed to parse response body as UTF-8");
-                Timer::after(Duration::from_secs(5)).await;
-                continue;
-            }
-        };
-        info!("Response body length: {} bytes", body.len());
-
-        // Parse the JSON response from httpbin.org/json
-        #[derive(Deserialize)]
-        struct SlideShow<'a> {
-            author: &'a str,
-            title: &'a str,
         }
-
-        #[derive(Deserialize)]
-        struct HttpBinResponse<'a> {
-            #[serde(borrow)]
-            slideshow: SlideShow<'a>,
-        }
-
-        let bytes = body.as_bytes();
-        match from_slice::<HttpBinResponse>(bytes) {
-            Ok((output, _used)) => {
-                info!("Successfully parsed JSON response!");
-                info!("Slideshow title: {:?}", output.slideshow.title);
-                info!("Slideshow author: {:?}", output.slideshow.author);
-            }
-            Err(e) => {
-                error!("Failed to parse JSON response: {}", Debug2Format(&e));
-                // Log preview of response for debugging
-                let preview = if body.len() > 200 { &body[..200] } else { body };
-                info!("Response preview: {:?}", preview);
-            }
-        }
-
-        Timer::after(Duration::from_secs(5)).await;
+        info!("Guess we got disconnected... Looping over.");
     }
 }
