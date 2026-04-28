@@ -1,6 +1,9 @@
 use crate::buf_reader::{BufReader, BufReaderError, ReadLineError};
 use crate::profile::{Address, Profile};
-use crate::{CancellationSignal, ReverserPosition};
+use crate::{
+    CancellationSignal, ReverserPosition, TRIPLE_SWITCH_FUNCTION_COUNT, TRIPLE_SWITCHES,
+    USER_BUTTONS,
+};
 use defmt::Format;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -23,11 +26,21 @@ impl Address {
     }
 }
 
+#[derive(Format, Default, Clone)]
+struct FunctionData {
+    /// ID of the function for this locomotive in particular
+    withrottle_id: Option<usize>,
+    /// State the function is in (pressed or not), so we can copy it when we
+    /// swap profiles or otherwise reconnect
+    state: bool,
+}
+
 pub struct WiThrottleClient<'a, Conn: Read + Write> {
-    functions: [Option<usize>; 9],
+    functions: [FunctionData; USER_BUTTONS + (TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT)],
     connection: BufReader<Conn>,
     profile: &'a Profile,
     line_buffer: &'a mut [u8; 4096],
+    roster_buffer: &'a mut heapless_latest::String<4096>,
     heartbeat_interval: Duration,
     heartbeat_deadline: &'a Signal<CriticalSectionRawMutex, Instant>,
 
@@ -53,14 +66,14 @@ impl<'a, T: embedded_io_async::ErrorType> From<ReadLineError<'a, T>> for WiThrot
 }
 
 impl<T> From<ReadExactError<T>> for WiThrottleError {
-    fn from(error: ReadExactError<T>) -> Self {
+    fn from(_error: ReadExactError<T>) -> Self {
         Self::ProtocolError
     }
 }
 impl<T: Format + embedded_io_async::Error + core::fmt::Debug> From<BufReaderError<T>>
     for WiThrottleError
 {
-    fn from(error: BufReaderError<T>) -> Self {
+    fn from(_error: BufReaderError<T>) -> Self {
         Self::ReadError
     }
 }
@@ -74,13 +87,17 @@ where
         id: &[u8],
         profile: &'a Profile,
         line_buffer: &'a mut [u8; 4096],
+        roster_buffer: &'a mut heapless_latest::String<4096>,
         heartbeat_deadline: &'a Signal<CriticalSectionRawMutex, Instant>,
     ) -> Result<Self, WiThrottleError> {
+        roster_buffer.clear();
+
         let mut this = Self {
             connection: connection.into(),
             profile,
             functions: Default::default(),
             line_buffer,
+            roster_buffer,
             heartbeat_interval: Duration::MAX,
             heartbeat_deadline,
             speed: 0,
@@ -110,6 +127,17 @@ where
         }
 
         Ok(this)
+    }
+
+    pub async fn set_profile(&mut self, profile: &'static Profile) -> Result<(), WiThrottleError> {
+        if self.profile.address != profile.address {
+            self.remove_locomotive().await?;
+        }
+
+        self.profile = profile;
+        self.handle_roster().await?;
+
+        Ok(())
     }
 
     pub async fn handle_line(
@@ -142,56 +170,87 @@ where
             defmt::info!("This is info about OUR locomotive! {} {}", address, line);
             defmt::assert_eq!(&line[0..6], "<;>]\\[");
             let list = &line[6..line.len() - 3];
-            self.functions.fill(None);
+            for function in self.functions.iter_mut() {
+                function.withrottle_id = None;
+            }
             for (index, function_label) in list.split("]\\[").enumerate() {
                 for (profile_index, profile_function) in self.profile.functions.iter().enumerate() {
                     if let Some(profile_function) = profile_function
                         && profile_function.label == function_label
                     {
-                        self.functions[profile_index] = Some(index);
+                        defmt::info!(
+                            "Found info about a function we care about: {}. It is at {}",
+                            function_label,
+                            index
+                        );
+                        self.functions[profile_index].withrottle_id = Some(index);
                     }
                 }
                 // ba
             }
         } else if let Some(line) = line.strip_prefix("RL") {
-            let (line, count) = defmt::unwrap!(Self::read_number(&line[0..], 10));
-            defmt::info!("Got {} roster entries!", count);
-            if count > 0 {
-                let line = defmt::unwrap!(line.strip_prefix("]\\["));
-                for roster_entry in line.splitn(count, "]\\[") {
-                    defmt::info!("Working roster entry.. {}", roster_entry);
-                    let mut roster_entry = roster_entry.splitn(3, "}|{");
-                    let name = roster_entry.next().ok_or(WiThrottleError::ProtocolError)?;
-                    let address = roster_entry.next().ok_or(WiThrottleError::ProtocolError)?;
-                    let (address_line, address) =
-                        Self::read_number(address, 16).ok_or(WiThrottleError::ProtocolError)?;
-                    if !address_line.is_empty() {
-                        defmt::error!(
-                            "Found extra junk at the end of the address: {}",
-                            address_line
-                        );
-                        return Err(WiThrottleError::ProtocolError);
-                    }
-                    let address_length =
-                        roster_entry.next().ok_or(WiThrottleError::ProtocolError)?;
-                    let address = match address_length {
-                        "L" => Address::Long(address as u16),
-                        "S" => Address::Short(address as u8),
-                        address_length => {
-                            defmt::error!("Unknown address length {}", address_length);
-                            return Err(WiThrottleError::ProtocolError);
-                        }
-                    };
-                    if self.profile.address == address {
-                        defmt::info!("This roster entry is us! {} / {}", name, address);
-                        self.add_locomotive(address).await?;
-                        break;
-                    }
-                }
-            }
+            self.roster_buffer.clear();
+            defmt::unwrap!(
+                self.roster_buffer.push_str(line),
+                "Somehow roster buffer was smaller than line?"
+            );
+            self.handle_roster().await?;
         } else {
             defmt::warn!("Unknown command: {}", line);
         }
+
+        Ok(())
+    }
+
+    async fn handle_roster(&mut self) -> Result<(), WiThrottleError> {
+        if self.roster_buffer.is_empty() {
+            defmt::warn!(
+                "Tried to handle roster, but it doesn't look like we have one in our buffer"
+            );
+            return Ok(());
+        }
+
+        let line = self.roster_buffer.as_str();
+        let (line, count) = defmt::unwrap!(Self::read_number(&line[0..], 10));
+        defmt::info!("Got {} roster entries!", count);
+        if count > 0 {
+            let line = defmt::unwrap!(line.strip_prefix("]\\["));
+            for roster_entry in line.splitn(count, "]\\[") {
+                defmt::info!("Working roster entry.. {}", roster_entry);
+                let mut roster_entry = roster_entry.splitn(3, "}|{");
+                let name = roster_entry.next().ok_or(WiThrottleError::ProtocolError)?;
+                let address = roster_entry.next().ok_or(WiThrottleError::ProtocolError)?;
+                let (address_line, address) =
+                    Self::read_number(address, 16).ok_or(WiThrottleError::ProtocolError)?;
+                if !address_line.is_empty() {
+                    defmt::error!(
+                        "Found extra junk at the end of the address: {}",
+                        address_line
+                    );
+                    return Err(WiThrottleError::ProtocolError);
+                }
+                let address_length = roster_entry.next().ok_or(WiThrottleError::ProtocolError)?;
+                let address = match address_length {
+                    "L" => Address::Long(address as u16),
+                    "S" => Address::Short(address as u8),
+                    address_length => {
+                        defmt::error!("Unknown address length {}", address_length);
+                        return Err(WiThrottleError::ProtocolError);
+                    }
+                };
+                if self.profile.address == address {
+                    defmt::info!("This roster entry is us! {} / {}", name, address);
+                    self.add_locomotive(address).await?;
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn remove_locomotive(&mut self) -> Result<(), WiThrottleError> {
+        self.write_throttle().await?;
+        self.connection.write_all(b"-*<;>r\n").await?;
 
         Ok(())
     }
@@ -210,7 +269,7 @@ where
 
         // Set speed step to 27 notches
         self.write_locomotive_action().await?;
-        self.connection.write_all(b"s4\n").await?;
+        self.connection.write_all(b"s1\n").await?;
 
         self.set_direction(self.direction).await?;
         self.set_speed(self.speed).await?;
@@ -242,10 +301,37 @@ where
 
     async fn write_locomotive_action(&mut self) -> Result<(), WiThrottleError> {
         self.write_throttle().await?;
+        self.connection.write_all(b"A").await?;
         self.connection
-            .write_all(b"A*<;>")
-            .await
-            .map_err(Into::into)
+            .write_all(self.profile.address.to_withrottle().as_bytes())
+            .await?;
+        self.connection.write_all(b"<;>").await?;
+        Ok(())
+    }
+
+    pub async fn set_function_state(
+        &mut self,
+        button_id: usize,
+        state: bool,
+    ) -> Result<(), WiThrottleError> {
+        let function = &mut self.functions[button_id];
+        function.state = state;
+        if let Some(function_id) = function.withrottle_id {
+            self.write_locomotive_action().await?;
+            self.connection
+                .write_all(&[b'F', if state { b'1' } else { b'0' }])
+                .await?;
+            self.connection
+                .write_all(
+                    defmt::unwrap!(
+                        heapless_latest::format!(20; "{function_id}"),
+                        "Format function id"
+                    )
+                    .as_bytes(),
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     pub async fn set_speed(&mut self, speed: u8) -> Result<(), WiThrottleError> {

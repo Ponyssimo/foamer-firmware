@@ -2,6 +2,8 @@ use defmt::Format;
 use heapless::String;
 use serde::{Deserialize, Serialize};
 
+use crate::{TRIPLE_SWITCH_FUNCTION_COUNT, TRIPLE_SWITCHES, USER_BUTTONS};
+
 #[derive(Serialize, Deserialize, Eq, Format, Clone, Copy, PartialEq)]
 pub enum Address {
     Short(u8),
@@ -41,5 +43,6 @@ pub struct Function {
 #[derive(Format, Serialize, Deserialize)]
 pub struct Profile {
     pub address: Address,
-    pub functions: [Option<Function>; 9],
+    pub functions:
+        [Option<Function>; USER_BUTTONS + (TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT)],
 }

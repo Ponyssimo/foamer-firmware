@@ -5,20 +5,23 @@
 #![no_main]
 #![feature(int_from_ascii)]
 
-use core::cell::OnceCell;
 use core::net::{Ipv4Addr, SocketAddr};
-use core::str::from_utf8;
 
+use crate::rotary_switch::RotarySwitch;
+use crate::triple_switch::{TripleSwitch, TripleSwitchState};
 use cyw43::JoinOptions;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::*;
 use embassy_executor::Spawner;
+use embassy_futures::join::join_array;
 use embassy_net::dns::{DnsQueryType, DnsSocket};
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_net::{Config, IpAddress, StackResources};
+use embassy_rp::Peri;
+use embassy_rp::adc::{self, Adc};
 use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::RoscRng;
-use embassy_rp::gpio::{Level, Output};
+use embassy_rp::gpio::{Input, Level, Output, Pin, Pull};
 use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::pio_programs::rotary_encoder::{Direction, PioEncoder, PioEncoderProgram};
@@ -27,14 +30,8 @@ use embassy_sync::channel::{Channel, TrySendError};
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, TimeoutError, Timer};
 use embedded_nal_async::TcpConnect;
-use reqwless::client::HttpClient;
-// Uncomment these for TLS requests:
-// use reqwless::client::{HttpClient, TlsConfig, TlsVerify};
-use reqwless::request::Method;
-use serde::Deserialize;
-use serde_json_core::from_slice;
 use static_cell::StaticCell;
-use strum::{EnumCount, EnumIter, VariantArray};
+use strum::VariantArray;
 use {defmt_rtt as _, panic_probe as _};
 
 use crate::profile::{Address, Function, Profile};
@@ -42,10 +39,13 @@ use crate::withrottle::{WiThrottleClient, WiThrottleError};
 
 mod buf_reader;
 mod profile;
+mod rotary_switch;
+mod triple_switch;
 mod withrottle;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
+    ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
 pub type CancellationSignal = Signal<CriticalSectionRawMutex, ()>;
@@ -57,6 +57,7 @@ async fn submit_request(request: WiThrottleRequest) {
     CANCELLATION_SIGNAL.signal(());
     if let Err(err) = WITHROTTLE_COMMAND_CHANNEL.try_send(request) {
         // Just in case they add variants later on, I want to handle them too...
+        #[allow(clippy::infallible_destructuring_match)]
         let request = match err {
             TrySendError::Full(request) => request,
         };
@@ -89,6 +90,79 @@ pub enum ReverserPosition {
     #[default]
     Neutral,
     Forwards,
+}
+
+const TRIPLE_SWITCHES: usize = 3;
+
+struct TripleSwitchInputs<'a> {
+    switches: [TripleSwitch<'a>; TRIPLE_SWITCHES],
+}
+
+impl<'a> TripleSwitchInputs<'a> {
+    fn new(
+        pin_0: Peri<'a, impl Pin>,
+        pin_1: Peri<'a, impl Pin>,
+        pin_2: Peri<'a, impl Pin>,
+    ) -> Self {
+        Self {
+            switches: [
+                TripleSwitch::new(pin_0),
+                TripleSwitch::new(pin_1),
+                TripleSwitch::new(pin_2),
+            ],
+        }
+    }
+
+    fn read_all(&mut self) -> impl Future<Output = [TripleSwitchState; TRIPLE_SWITCHES]> {
+        join_array(self.switches.each_mut().map(|switch| switch.read()))
+    }
+}
+
+const USER_BUTTONS: usize = 6;
+
+struct UserInputs<'a> {
+    user: [Input<'a>; USER_BUTTONS],
+    profile: RotarySwitch<'a>,
+}
+
+#[embassy_executor::task]
+async fn read_function_buttons(mut user_inputs: UserInputs<'static>) {
+    let mut values = user_inputs.user.each_ref().map(|input| input.is_high());
+    let mut old_profile = user_inputs.profile.read();
+    loop {
+        embassy_futures::select::select(
+            embassy_futures::select::select_array(
+                user_inputs
+                    .profile
+                    .pins
+                    .each_mut()
+                    .map(|input| input.wait_for_any_edge()),
+            ),
+            embassy_futures::select::select_array(
+                user_inputs
+                    .user
+                    .each_mut()
+                    .map(|input| input.wait_for_any_edge()),
+            ),
+        )
+        .await;
+        let new_values = user_inputs.user.each_ref().map(|input| input.is_high());
+        for (index, (_old, new)) in
+            core::iter::zip(values.iter().copied(), new_values.iter().copied())
+                .enumerate()
+                .filter(|(_index, (old, new))| old != new)
+        {
+            defmt::info!("State of {} changed to {}", index, new);
+            submit_request(WiThrottleRequest::SetFunctionState(index, new)).await;
+        }
+        values = new_values;
+
+        let new_profile = user_inputs.profile.read();
+        if old_profile != new_profile {
+            submit_request(WiThrottleRequest::SetProfile(new_profile as usize)).await;
+        }
+        old_profile = new_profile;
+    }
 }
 
 #[embassy_executor::task]
@@ -127,7 +201,8 @@ async fn read_reverser_encoder(mut encoder: PioEncoder<'static, PIO0, 2>) {
             }
             direction => {
                 error!(
-                    "Encoder is turning, but we are already in {}! Did we start desynced? Ignoring.",
+                    "Encoder is turning in direction {}, but we are already in {}! Did we start desynced? Ignoring.",
+                    matches!(direction, Direction::Clockwise),
                     position
                 );
                 position
@@ -135,20 +210,64 @@ async fn read_reverser_encoder(mut encoder: PioEncoder<'static, PIO0, 2>) {
         };
         submit_request(WiThrottleRequest::SetReverser(position)).await
     }
+}
 
-    // let mut reverser: usize = 1;
-    // loop {
-    //     info!("Count: {}", count);
-    //     match count.checked_add_signed(match encoder.read().await {
-    //         Direction::Clockwise => 1,
-    //         Direction::CounterClockwise => -1,
-    //     }) {
-    //         Some(value) => count = value,
-    //         None => {
-    //             error!("Encoder running backwards?");
-    //         }
-    //     }
-    // }
+const TRIPLE_SWITCH_FUNCTION_COUNT: usize = TripleSwitchState::Down as usize + 1;
+
+#[embassy_executor::task]
+async fn read_triple_switches(mut triple_switch_inputs: TripleSwitchInputs<'static>) {
+    let mut old = triple_switch_inputs.read_all().await;
+    loop {
+        let new = triple_switch_inputs.read_all().await;
+        for (index, (old, new)) in core::iter::zip(old.iter().copied(), new.iter().copied())
+            .filter(|(old, new)| old != new)
+            .enumerate()
+        {
+            submit_request(WiThrottleRequest::SetFunctionState(
+                USER_BUTTONS + (index * TRIPLE_SWITCH_FUNCTION_COUNT) + (new as usize),
+                true,
+            ))
+            .await;
+
+            submit_request(WiThrottleRequest::SetFunctionState(
+                USER_BUTTONS + (index * TRIPLE_SWITCH_FUNCTION_COUNT) + (old as usize),
+                false,
+            ))
+            .await;
+        }
+        old = new;
+
+        Timer::after(Duration::from_millis(50)).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn read_potentiometers(
+    mut adc: Adc<'static, embassy_rp::adc::Async>,
+    mut brake: adc::Channel<'static>,
+    mut horn: adc::Channel<'static>,
+    mut pot_drv: Output<'static>,
+) {
+    let mut last_brake = 0;
+    let mut last_horn = 0;
+    loop {
+        pot_drv.set_high();
+        // Make sure the electricity is flowing!
+        Timer::after(Duration::from_micros(100)).await;
+        let brake = defmt::unwrap!(adc.read(&mut brake).await, "Brake conversion error");
+        let horn = defmt::unwrap!(adc.read(&mut horn).await, "Horn conversion error");
+        pot_drv.set_low();
+
+        if brake != last_brake || horn != last_horn {
+            defmt::trace!("Brake is {} and Horn is {}", brake, horn);
+            // TODO: Mary Integrate this with throttle position and shit
+        }
+
+        last_brake = brake;
+        last_horn = horn;
+
+        Timer::after(Duration::from_millis(100)).await;
+    }
 }
 
 #[embassy_executor::task]
@@ -185,6 +304,7 @@ pub enum WiThrottleRequest {
     SetFunctionState(usize, bool),
     SetThrottle(ThrottlePosition),
     SetReverser(ReverserPosition),
+    SetProfile(usize),
     Heartbeat,
 }
 
@@ -228,6 +348,30 @@ async fn main(spawner: Spawner) {
     let reverser_encoder = PioEncoder::new(&mut pio.common, pio.sm2, p.PIN_5, p.PIN_6, &prg);
     defmt::unwrap!(spawner.spawn(read_throttle_encoder(throttle_encoder)));
     defmt::unwrap!(spawner.spawn(read_reverser_encoder(reverser_encoder)));
+
+    let adc = Adc::new(p.ADC, Irqs, adc::Config::default());
+    let horn = adc::Channel::new_pin(p.PIN_26, Pull::None);
+    let brake = adc::Channel::new_pin(p.PIN_27, Pull::None);
+    let pot_drv = Output::new(p.PIN_19, Level::Low);
+    defmt::unwrap!(spawner.spawn(read_potentiometers(adc, brake, horn, pot_drv)));
+
+    defmt::unwrap!(spawner.spawn(read_function_buttons(UserInputs {
+        user: [
+            // User 1-4
+            Input::new(p.PIN_21, Pull::Down),
+            Input::new(p.PIN_20, Pull::Down),
+            Input::new(p.PIN_18, Pull::Down),
+            Input::new(p.PIN_2, Pull::Down),
+            // Everything else...
+            Input::new(p.PIN_16, Pull::Down), // Bell
+            Input::new(p.PIN_17, Pull::Down), // Dynamics
+        ],
+        profile: RotarySwitch::new(p.PIN_13, p.PIN_12, p.PIN_11, p.PIN_10)
+    })));
+
+    defmt::unwrap!(spawner.spawn(read_triple_switches(TripleSwitchInputs::new(
+        p.PIN_7, p.PIN_8, p.PIN_9
+    ))));
 
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let state = STATE.init(cyw43::State::new());
@@ -281,6 +425,8 @@ async fn main(spawner: Spawner) {
 
     static LINE_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
     let line_buffer = LINE_BUFFER.init([0; 4096]);
+    static ROSTER_BUFFER: StaticCell<heapless_latest::String<4096>> = StaticCell::new();
+    let roster_buffer = ROSTER_BUFFER.init(Default::default());
     static PROFILES: StaticCell<[Profile; 10]> = StaticCell::new();
     let profiles = PROFILES.init(core::array::from_fn(|_| Profile {
         address: Address::Long(0x1654),
@@ -297,6 +443,13 @@ async fn main(spawner: Spawner) {
             None,
             None,
             None,
+            // Tri-Switches
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -307,16 +460,9 @@ async fn main(spawner: Spawner) {
     defmt::unwrap!(spawner.spawn(withrottle_heartbeat(&HEARTBEAT_DEADLINE)));
 
     loop {
-        let mut rx_buffer = [0; 4096];
-        // Uncomment these for TLS requests:
-        // let mut tls_read_buffer = [0; 16640];
-        // let mut tls_write_buffer = [0; 16640];
-
         let client_state = TcpClientState::<1, 4096, 4096>::new();
         let tcp_client = TcpClient::new(stack, &client_state);
         let dns_client = DnsSocket::new(stack);
-        // Uncomment these for TLS requests:
-        // let tls_config = TlsConfig::new(seed, &mut tls_read_buffer, &mut tls_write_buffer, TlsVerify::None);
 
         let withrottle_servers = dns_client
             .query("_withrottle._tcp.local", DnsQueryType::A)
@@ -349,13 +495,14 @@ async fn main(spawner: Spawner) {
         let hardware_address = stack.hardware_address();
         let hardware_address_bytes = hardware_address.as_bytes();
         let mut id = [0u8; 32];
-        let id = base16ct::lower::encode(&hardware_address_bytes, &mut id).unwrap();
+        let id = base16ct::lower::encode(hardware_address_bytes, &mut id).unwrap();
 
         let mut withrottle_client = match WiThrottleClient::new(
             withrottle_socket,
             id,
             &profiles[0],
             line_buffer,
+            roster_buffer,
             &HEARTBEAT_DEADLINE,
         )
         .await
@@ -373,14 +520,20 @@ async fn main(spawner: Spawner) {
                 let result = async {
                     match message {
                         WiThrottleRequest::SetFunctionState(function_id, state) => {
-                            &withrottle_client;
-                            defmt::info!("Set the state with the withrottle client");
+                            withrottle_client
+                                .set_function_state(function_id, state)
+                                .await?;
+                            defmt::info!("Set the state of function {} to {}", function_id, state);
+                        }
+                        WiThrottleRequest::SetProfile(profile) => {
+                            withrottle_client.set_profile(&profiles[profile]).await?;
+                            defmt::info!("Set profile to #{}", profile);
                         }
                         WiThrottleRequest::SetReverser(direction) => {
                             withrottle_client.set_direction(direction).await?;
                         }
                         WiThrottleRequest::SetThrottle(position) => {
-                            withrottle_client.set_speed((position as u8) * 3).await?;
+                            withrottle_client.set_speed((position as u8) * 15).await?;
                         }
                         WiThrottleRequest::Heartbeat => {
                             withrottle_client.heartbeat().await?;
