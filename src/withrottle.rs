@@ -35,8 +35,11 @@ struct FunctionData {
     state: bool,
 }
 
+const PROFILE_FUNCTION_COUNT: usize =
+    USER_BUTTONS + (TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT);
+
 pub struct WiThrottleClient<'a, Conn: Read + Write> {
-    functions: [FunctionData; USER_BUTTONS + (TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT)],
+    functions: [FunctionData; PROFILE_FUNCTION_COUNT],
     connection: BufReader<Conn>,
     profile: &'a Profile,
     line_buffer: &'a mut [u8; 4096],
@@ -138,13 +141,21 @@ where
             function.withrottle_id = None;
         }
 
-        if self.profile.address != profile.address {
+        let new_locomotive = self.profile.address != profile.address;
+        if new_locomotive {
             self.locomotive_buffer.clear();
             self.remove_locomotive().await?;
         }
 
         self.profile = profile;
-        self.handle_roster().await?;
+
+        if new_locomotive {
+            // Try and find our locomotive in the roster
+            self.handle_roster().await?;
+        } else {
+            // Profile function mapping is probably different
+            self.handle_locomotive().await?;
+        }
 
         Ok(())
     }
@@ -185,7 +196,7 @@ where
                 self.locomotive_buffer.push_str(list),
                 "Somehow locomotive buffer was smaller than line?"
             );
-            self.handle_locomotive()?;
+            self.handle_locomotive().await?;
         } else if let Some(line) = line.strip_prefix("RL") {
             self.roster_buffer.clear();
             defmt::unwrap!(
@@ -200,7 +211,7 @@ where
         Ok(())
     }
 
-    fn handle_locomotive(&mut self) -> Result<(), WiThrottleError> {
+    async fn handle_locomotive(&mut self) -> Result<(), WiThrottleError> {
         if self.locomotive_buffer.is_empty() {
             defmt::info!(
                 "Tried to handle locomotive, but it doesn't look like we have one in our buffer"
@@ -211,6 +222,7 @@ where
         for function in self.functions.iter_mut() {
             function.withrottle_id = None;
         }
+        let mut profile_function_needs_update = [false; PROFILE_FUNCTION_COUNT];
         for (index, function_label) in list.split("]\\[").enumerate() {
             for (profile_index, profile_function) in self.profile.functions.iter().enumerate() {
                 if let Some(profile_function) = profile_function
@@ -222,8 +234,17 @@ where
                         index
                     );
                     self.functions[profile_index].withrottle_id = Some(index);
+                    profile_function_needs_update[profile_index] = true;
                 }
             }
+        }
+
+        for profile_index in profile_function_needs_update
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, needs_update)| if needs_update { Some(index) } else { None })
+        {
+            self.send_function_state(profile_index).await?;
         }
 
         Ok(())
@@ -336,13 +357,9 @@ where
         Ok(())
     }
 
-    pub async fn set_function_state(
-        &mut self,
-        button_id: usize,
-        state: bool,
-    ) -> Result<(), WiThrottleError> {
-        let function = &mut self.functions[button_id];
-        function.state = state;
+    async fn send_function_state(&mut self, function_id: usize) -> Result<(), WiThrottleError> {
+        let function = &self.functions[function_id];
+        let state = function.state;
         if let Some(function_id) = function.withrottle_id {
             self.write_locomotive_action().await?;
             self.connection
@@ -358,6 +375,17 @@ where
                 )
                 .await?;
         }
+        Ok(())
+    }
+
+    pub async fn set_function_state(
+        &mut self,
+        button_id: usize,
+        state: bool,
+    ) -> Result<(), WiThrottleError> {
+        let function = &mut self.functions[button_id];
+        function.state = state;
+        self.send_function_state(button_id).await?;
         Ok(())
     }
 
