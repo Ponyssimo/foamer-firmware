@@ -127,9 +127,26 @@ struct UserInputs<'a> {
 
 #[embassy_executor::task]
 async fn read_function_buttons(mut user_inputs: UserInputs<'static>) {
-    let mut values = user_inputs.user.each_ref().map(|input| input.is_high());
-    let mut old_profile = user_inputs.profile.read();
+    let mut old_values = None::<[bool; USER_BUTTONS]>;
+    let mut old_profile = None::<u8>;
     loop {
+        let new_values = user_inputs.user.each_ref().map(|input| input.is_high());
+        for (index, (_old, new)) in
+            core::iter::zip(old_values.transpose().into_iter(), new_values.into_iter())
+                .enumerate()
+                .filter(|(_index, (old, new))| *old != Some(*new))
+        {
+            defmt::info!("State of {} changed to {}", index, new);
+            submit_request(WiThrottleRequest::SetFunctionState(index, new)).await;
+        }
+        old_values = Some(new_values);
+
+        let new_profile = user_inputs.profile.read();
+        if old_profile != Some(new_profile) {
+            submit_request(WiThrottleRequest::SetProfile(new_profile as usize)).await;
+        }
+        old_profile = Some(new_profile);
+
         embassy_futures::select::select(
             embassy_futures::select::select_array(
                 user_inputs
@@ -146,22 +163,6 @@ async fn read_function_buttons(mut user_inputs: UserInputs<'static>) {
             ),
         )
         .await;
-        let new_values = user_inputs.user.each_ref().map(|input| input.is_high());
-        for (index, (_old, new)) in
-            core::iter::zip(values.iter().copied(), new_values.iter().copied())
-                .enumerate()
-                .filter(|(_index, (old, new))| old != new)
-        {
-            defmt::info!("State of {} changed to {}", index, new);
-            submit_request(WiThrottleRequest::SetFunctionState(index, new)).await;
-        }
-        values = new_values;
-
-        let new_profile = user_inputs.profile.read();
-        if old_profile != new_profile {
-            submit_request(WiThrottleRequest::SetProfile(new_profile as usize)).await;
-        }
-        old_profile = new_profile;
     }
 }
 
@@ -214,14 +215,32 @@ async fn read_reverser_encoder(mut encoder: PioEncoder<'static, PIO0, 2>) {
 
 const TRIPLE_SWITCH_FUNCTION_COUNT: usize = TripleSwitchState::Down as usize + 1;
 
+trait OptionArrayExt<const N: usize> {
+    type Inner;
+
+    fn transpose(self) -> [Option<Self::Inner>; N];
+}
+impl<T, const N: usize> OptionArrayExt<N> for Option<[T; N]> {
+    type Inner = T;
+
+    fn transpose(self) -> [Option<Self::Inner>; N] {
+        self.map(|array| array.map(Some))
+            .unwrap_or_else(|| [const { None }; N])
+    }
+}
+
 #[embassy_executor::task]
 async fn read_triple_switches(mut triple_switch_inputs: TripleSwitchInputs<'static>) {
-    let mut old = triple_switch_inputs.read_all().await;
+    let mut old = None::<[TripleSwitchState; 3]>;
     loop {
         let new = triple_switch_inputs.read_all().await;
-        for (index, (old, new)) in core::iter::zip(old.iter().copied(), new.iter().copied())
-            .filter(|(old, new)| old != new)
-            .enumerate()
+        for (index, (old, new)) in core::iter::zip(
+            // Option<[T; N]> -> [Option<T>; N]
+            old.transpose().into_iter(),
+            new.into_iter(),
+        )
+        .filter(|(old, new)| *old != Some(*new))
+        .enumerate()
         {
             submit_request(WiThrottleRequest::SetFunctionState(
                 USER_BUTTONS + (index * TRIPLE_SWITCH_FUNCTION_COUNT) + (new as usize),
@@ -229,13 +248,15 @@ async fn read_triple_switches(mut triple_switch_inputs: TripleSwitchInputs<'stat
             ))
             .await;
 
-            submit_request(WiThrottleRequest::SetFunctionState(
-                USER_BUTTONS + (index * TRIPLE_SWITCH_FUNCTION_COUNT) + (old as usize),
-                false,
-            ))
-            .await;
+            if let Some(old) = old {
+                submit_request(WiThrottleRequest::SetFunctionState(
+                    USER_BUTTONS + (index * TRIPLE_SWITCH_FUNCTION_COUNT) + (old as usize),
+                    false,
+                ))
+                .await;
+            }
         }
-        old = new;
+        old = Some(new);
 
         Timer::after(Duration::from_millis(50)).await;
     }
@@ -427,6 +448,8 @@ async fn main(spawner: Spawner) {
     let line_buffer = LINE_BUFFER.init([0; 4096]);
     static ROSTER_BUFFER: StaticCell<heapless_latest::String<4096>> = StaticCell::new();
     let roster_buffer = ROSTER_BUFFER.init(Default::default());
+    static LOCOMOTIVE_BUFFER: StaticCell<heapless_latest::String<4096>> = StaticCell::new();
+    let locomotive_buffer = LOCOMOTIVE_BUFFER.init(Default::default());
     static PROFILES: StaticCell<[Profile; 10]> = StaticCell::new();
     let profiles = PROFILES.init(core::array::from_fn(|_| Profile {
         address: Address::Long(0x1654),
@@ -503,6 +526,7 @@ async fn main(spawner: Spawner) {
             &profiles[0],
             line_buffer,
             roster_buffer,
+            locomotive_buffer,
             &HEARTBEAT_DEADLINE,
         )
         .await

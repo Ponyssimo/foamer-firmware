@@ -41,6 +41,7 @@ pub struct WiThrottleClient<'a, Conn: Read + Write> {
     profile: &'a Profile,
     line_buffer: &'a mut [u8; 4096],
     roster_buffer: &'a mut heapless_latest::String<4096>,
+    locomotive_buffer: &'a mut heapless_latest::String<4096>,
     heartbeat_interval: Duration,
     heartbeat_deadline: &'a Signal<CriticalSectionRawMutex, Instant>,
 
@@ -88,9 +89,11 @@ where
         profile: &'a Profile,
         line_buffer: &'a mut [u8; 4096],
         roster_buffer: &'a mut heapless_latest::String<4096>,
+        locomotive_buffer: &'a mut heapless_latest::String<4096>,
         heartbeat_deadline: &'a Signal<CriticalSectionRawMutex, Instant>,
     ) -> Result<Self, WiThrottleError> {
         roster_buffer.clear();
+        locomotive_buffer.clear();
 
         let mut this = Self {
             connection: connection.into(),
@@ -98,6 +101,7 @@ where
             functions: Default::default(),
             line_buffer,
             roster_buffer,
+            locomotive_buffer,
             heartbeat_interval: Duration::MAX,
             heartbeat_deadline,
             speed: 0,
@@ -130,7 +134,12 @@ where
     }
 
     pub async fn set_profile(&mut self, profile: &'static Profile) -> Result<(), WiThrottleError> {
+        for function in self.functions.iter_mut() {
+            function.withrottle_id = None;
+        }
+
         if self.profile.address != profile.address {
+            self.locomotive_buffer.clear();
             self.remove_locomotive().await?;
         }
 
@@ -169,25 +178,14 @@ where
             }
             defmt::info!("This is info about OUR locomotive! {} {}", address, line);
             defmt::assert_eq!(&line[0..6], "<;>]\\[");
+
             let list = &line[6..line.len() - 3];
-            for function in self.functions.iter_mut() {
-                function.withrottle_id = None;
-            }
-            for (index, function_label) in list.split("]\\[").enumerate() {
-                for (profile_index, profile_function) in self.profile.functions.iter().enumerate() {
-                    if let Some(profile_function) = profile_function
-                        && profile_function.label == function_label
-                    {
-                        defmt::info!(
-                            "Found info about a function we care about: {}. It is at {}",
-                            function_label,
-                            index
-                        );
-                        self.functions[profile_index].withrottle_id = Some(index);
-                    }
-                }
-                // ba
-            }
+            self.locomotive_buffer.clear();
+            defmt::unwrap!(
+                self.locomotive_buffer.push_str(list),
+                "Somehow locomotive buffer was smaller than line?"
+            );
+            self.handle_locomotive()?;
         } else if let Some(line) = line.strip_prefix("RL") {
             self.roster_buffer.clear();
             defmt::unwrap!(
@@ -197,6 +195,35 @@ where
             self.handle_roster().await?;
         } else {
             defmt::warn!("Unknown command: {}", line);
+        }
+
+        Ok(())
+    }
+
+    fn handle_locomotive(&mut self) -> Result<(), WiThrottleError> {
+        if self.locomotive_buffer.is_empty() {
+            defmt::info!(
+                "Tried to handle locomotive, but it doesn't look like we have one in our buffer"
+            );
+            return Ok(());
+        }
+        let list = self.locomotive_buffer.as_str();
+        for function in self.functions.iter_mut() {
+            function.withrottle_id = None;
+        }
+        for (index, function_label) in list.split("]\\[").enumerate() {
+            for (profile_index, profile_function) in self.profile.functions.iter().enumerate() {
+                if let Some(profile_function) = profile_function
+                    && profile_function.label == function_label
+                {
+                    defmt::info!(
+                        "Found info about a function we care about: {}. It is at {}",
+                        function_label,
+                        index
+                    );
+                    self.functions[profile_index].withrottle_id = Some(index);
+                }
+            }
         }
 
         Ok(())
