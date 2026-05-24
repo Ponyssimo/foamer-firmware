@@ -2,7 +2,7 @@ use defmt::Format;
 use heapless::String;
 use serde::{Deserialize, Serialize};
 
-use crate::{TRIPLE_SWITCH_FUNCTION_COUNT, TRIPLE_SWITCHES, USER_BUTTONS};
+use crate::{BRAKE_COUNT, TRIPLE_SWITCH_FUNCTION_COUNT, TRIPLE_SWITCHES, USER_BUTTONS};
 
 #[derive(Serialize, Deserialize, Eq, Format, Clone, Copy, PartialEq)]
 pub enum Address {
@@ -36,13 +36,14 @@ pub enum Address {
 // }
 
 #[derive(Format, Serialize, Deserialize)]
-pub struct Function {
-    pub label: String<128>,
+pub enum Function {
+    Label { label: String<128> },
+    Hardcoded { id: u8 },
 }
 
 #[derive(Format, Serialize, Deserialize)]
 pub struct Profile {
     pub address: Address,
-    pub functions:
-        [Option<Function>; USER_BUTTONS + (TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT)],
+    pub functions: [Option<Function>;
+        USER_BUTTONS + (TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT) + BRAKE_COUNT],
 }

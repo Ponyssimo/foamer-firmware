@@ -791,58 +791,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "embassy-rp-examples"
-version = "0.1.0"
-dependencies = [
- "assign-resources",
- "base16ct 1.0.0",
- "byte-slice-cast",
- "cortex-m",
- "cortex-m-rt",
- "critical-section",
- "cyw43",
- "cyw43-pio",
- "defmt 1.0.1",
- "defmt-rtt",
- "display-interface",
- "display-interface-spi",
- "embassy-embedded-hal",
- "embassy-executor",
- "embassy-futures",
- "embassy-net",
- "embassy-net-wiznet",
- "embassy-rp",
- "embassy-sync",
- "embassy-time",
- "embassy-usb",
- "embassy-usb-logger",
- "embedded-graphics",
- "embedded-hal 1.0.0",
- "embedded-hal-async",
- "embedded-hal-bus",
- "embedded-io-async 0.7.0",
- "embedded-nal-async",
- "embedded-sdmmc",
- "embedded-storage",
- "fixed",
- "fixed-macro",
- "heapless 0.8.0",
- "heapless 0.9.2",
- "mipidsi",
- "panic-probe",
- "portable-atomic",
- "postcard",
- "rand",
- "reqwless",
- "serde",
- "serde-json-core",
- "smart-leds",
- "static_cell",
- "strum",
- "usbd-hid 0.9.0",
-]
-
-[[package]]
 name = "embassy-sync"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1215,6 +1163,58 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
+name = "foamer-firmware"
+version = "0.1.0"
+dependencies = [
+ "assign-resources",
+ "base16ct 1.0.0",
+ "byte-slice-cast",
+ "cortex-m",
+ "cortex-m-rt",
+ "critical-section",
+ "cyw43",
+ "cyw43-pio",
+ "defmt 1.0.1",
+ "defmt-rtt",
+ "display-interface",
+ "display-interface-spi",
+ "embassy-embedded-hal",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-net",
+ "embassy-net-wiznet",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-usb",
+ "embassy-usb-logger",
+ "embedded-graphics",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-hal-bus",
+ "embedded-io-async 0.7.0",
+ "embedded-nal-async",
+ "embedded-sdmmc",
+ "embedded-storage",
+ "fixed",
+ "fixed-macro",
+ "heapless 0.8.0",
+ "heapless 0.9.2",
+ "mipidsi",
+ "panic-probe",
+ "portable-atomic",
+ "postcard",
+ "rand",
+ "reqwless",
+ "serde",
+ "serde-json-core",
+ "smart-leds",
+ "static_cell",
+ "strum",
+ "usbd-hid 0.9.0",
+]
 
 [[package]]
 name = "futures"

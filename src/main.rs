@@ -3,12 +3,13 @@
 
 #![no_std]
 #![no_main]
-#![feature(int_from_ascii)]
 
+use core::cell::RefCell;
 use core::net::{Ipv4Addr, SocketAddr};
 
 use crate::rotary_switch::RotarySwitch;
 use crate::triple_switch::{TripleSwitch, TripleSwitchState};
+use critical_section::Mutex;
 use cyw43::JoinOptions;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::*;
@@ -52,6 +53,20 @@ pub type CancellationSignal = Signal<CriticalSectionRawMutex, ()>;
 
 const WIFI_NETWORK: &str = "parkerhouse"; // change to your network SSID
 const WIFI_PASSWORD: &str = "password"; // change to your network password
+
+static STATUS_LIGHT: Mutex<RefCell<Option<Output<'static>>>> = Mutex::new(RefCell::new(None));
+
+#[cortex_m_rt::exception]
+unsafe fn HardFault(_ef: &cortex_m_rt::ExceptionFrame) -> ! {
+    loop {
+        critical_section::with(|cs| {
+            if let Some(output) = STATUS_LIGHT.borrow_ref_mut(cs).as_mut() {
+                output.toggle();
+            }
+        });
+        cortex_m::asm::delay(15_000_000);
+    }
+}
 
 async fn submit_request(request: WiThrottleRequest) {
     CANCELLATION_SIGNAL.signal(());
@@ -142,10 +157,12 @@ async fn read_function_buttons(mut user_inputs: UserInputs<'static>) {
         old_values = Some(new_values);
 
         let new_profile = user_inputs.profile.read();
-        if old_profile != Some(new_profile) {
+        if new_profile != old_profile
+            && let Some(new_profile) = new_profile
+        {
             submit_request(WiThrottleRequest::SetProfile(new_profile as usize)).await;
+            old_profile = Some(new_profile);
         }
-        old_profile = Some(new_profile);
 
         embassy_futures::select::select(
             embassy_futures::select::select_array(
@@ -163,6 +180,7 @@ async fn read_function_buttons(mut user_inputs: UserInputs<'static>) {
             ),
         )
         .await;
+        Timer::after(Duration::from_millis(50)).await;
     }
 }
 
@@ -171,10 +189,10 @@ async fn read_throttle_encoder(mut encoder: PioEncoder<'static, PIO0, 1>) {
     let mut position = ThrottlePosition::default();
     loop {
         position = match encoder.read().await {
-            Direction::Clockwise if position < ThrottlePosition::Notch8 => {
+            Direction::CounterClockwise if position < ThrottlePosition::Notch8 => {
                 ThrottlePosition::VARIANTS[position as usize + 1]
             }
-            Direction::CounterClockwise if position > ThrottlePosition::Idle => {
+            Direction::Clockwise if position > ThrottlePosition::Idle => {
                 ThrottlePosition::VARIANTS[position as usize - 1]
             }
             _direction => {
@@ -213,7 +231,19 @@ async fn read_reverser_encoder(mut encoder: PioEncoder<'static, PIO0, 2>) {
     }
 }
 
+#[derive(VariantArray, Format, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+enum BrakeState {
+    Released,
+    Brake1,
+    Brake2,
+    Brake3,
+    Emergency,
+}
+
 const TRIPLE_SWITCH_FUNCTION_COUNT: usize = TripleSwitchState::Down as usize + 1;
+const BRAKE_COUNT: usize = BrakeState::Emergency as usize + 1;
+const BRAKE_START_INDEX: usize = USER_BUTTONS + (TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT);
 
 trait OptionArrayExt<const N: usize> {
     type Inner;
@@ -269,8 +299,8 @@ async fn read_potentiometers(
     mut horn: adc::Channel<'static>,
     mut pot_drv: Output<'static>,
 ) {
-    let mut last_brake = 0;
     let mut last_horn = 0;
+    let mut last_brake_state = BrakeState::Released;
     loop {
         pot_drv.set_high();
         // Make sure the electricity is flowing!
@@ -279,30 +309,53 @@ async fn read_potentiometers(
         let horn = defmt::unwrap!(adc.read(&mut horn).await, "Horn conversion error");
         pot_drv.set_low();
 
-        if brake != last_brake || horn != last_horn {
-            defmt::trace!("Brake is {} and Horn is {}", brake, horn);
-            // TODO: Mary Integrate this with throttle position and shit
+        // Brake stuff
+        {
+            let min = 500u16;
+            let max = 2800u16;
+            let step = (max - min) / BrakeState::VARIANTS.len() as u16;
+            let mut brake_state = BrakeState::Released;
+            for (index, state) in BrakeState::VARIANTS.iter().copied().enumerate() {
+                let index = index as u16;
+                if brake > min + (step * index) {
+                    brake_state = state;
+                }
+            }
+            if brake_state != last_brake_state {
+                for (index, state) in BrakeState::VARIANTS.iter().copied().enumerate() {
+                    let index = index as u16;
+                    submit_request(WiThrottleRequest::SetFunctionState(
+                        BRAKE_START_INDEX + index as usize,
+                        brake_state == state,
+                    ))
+                    .await;
+                }
+            }
+            last_brake_state = brake_state;
         }
 
-        last_brake = brake;
         last_horn = horn;
 
-        Timer::after(Duration::from_millis(100)).await;
+        Timer::after(Duration::from_millis(500)).await;
     }
 }
 
 #[embassy_executor::task]
-async fn withrottle_heartbeat(rx: &'static Signal<CriticalSectionRawMutex, Instant>) -> ! {
-    let mut deadline = rx.wait().await;
+async fn withrottle_heartbeat(rx: &'static Signal<CriticalSectionRawMutex, Duration>) -> ! {
+    let mut interval = rx.wait().await;
+    let mut deadline = Instant::now().checked_add(interval).unwrap_or(Instant::MAX);
     loop {
         match embassy_time::with_deadline(deadline, rx.wait()).await {
-            Ok(new_deadline) => {
-                deadline = new_deadline;
+            Ok(new_interval) => {
+                defmt::info!("Got new heartbeat interval: {}", new_interval);
+                interval = new_interval;
+                deadline = Instant::now().checked_add(interval).unwrap_or(Instant::MAX);
             }
             Err(TimeoutError) => {
+                defmt::debug!("Heartbeat time!");
                 submit_request(WiThrottleRequest::Heartbeat).await;
                 // Don't do anything till we have a new one
-                deadline = Instant::MAX;
+                deadline = Instant::now().checked_add(interval).unwrap_or(Instant::MAX);
             }
         }
     }
@@ -339,6 +392,11 @@ async fn main(spawner: Spawner) {
 
     let p = embassy_rp::init(Default::default());
     let mut rng = RoscRng;
+
+    let status_light = Output::new(p.PIN_14, Level::Low);
+    critical_section::with(|cs| {
+        *STATUS_LIGHT.borrow_ref_mut(cs) = Some(status_light);
+    });
 
     // let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
     // let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
@@ -431,6 +489,7 @@ async fn main(spawner: Spawner) {
         .await
     {
         info!("join failed with status={}", err.status);
+        Timer::after(Duration::from_secs(5)).await;
     }
 
     info!("waiting for link...");
@@ -451,16 +510,21 @@ async fn main(spawner: Spawner) {
     static LOCOMOTIVE_BUFFER: StaticCell<heapless_latest::String<4096>> = StaticCell::new();
     let locomotive_buffer = LOCOMOTIVE_BUFFER.init(Default::default());
     static PROFILES: StaticCell<[Profile; 10]> = StaticCell::new();
-    let profiles = PROFILES.init(core::array::from_fn(|_| Profile {
-        address: Address::Long(0x1654),
+    let profiles = PROFILES.init(core::array::from_fn(|index| Profile {
+        address: [
+            0x7430, 0x8104, 0x1068, 0x7421, //
+            0x7420, 0x3600, 0x1957, 0x7421, //
+            0x7420, 0x8104,
+        ]
+        .map(Address::Long)[index],
         functions: [
-            Some(Function {
+            Some(Function::Label {
                 label: defmt::unwrap!("Bell".try_into()),
             }),
-            Some(Function {
+            Some(Function::Label {
                 label: defmt::unwrap!("Horn".try_into()),
             }),
-            Some(Function {
+            Some(Function::Label {
                 label: defmt::unwrap!("Amore".try_into()),
             }),
             None,
@@ -476,11 +540,19 @@ async fn main(spawner: Spawner) {
             None,
             None,
             None,
+            // Brake
+            None,
+            Some(Function::Hardcoded { id: 6 }),
+            Some(Function::Hardcoded { id: 6 }),
+            Some(Function::Hardcoded { id: 6 }),
+            // Emergency
+            None,
         ],
     }));
 
-    static HEARTBEAT_DEADLINE: Signal<CriticalSectionRawMutex, Instant> = Signal::new();
-    defmt::unwrap!(spawner.spawn(withrottle_heartbeat(&HEARTBEAT_DEADLINE)));
+    static HEARTBEAT_INTERVAL: Signal<CriticalSectionRawMutex, Duration> = Signal::new();
+    let token = spawner.spawn(withrottle_heartbeat(&HEARTBEAT_INTERVAL));
+    defmt::unwrap!(token);
 
     loop {
         let client_state = TcpClientState::<1, 4096, 4096>::new();
@@ -492,7 +564,8 @@ async fn main(spawner: Spawner) {
             .await
             .unwrap_or_else(|_| {
                 defmt::unwrap!(heapless::Vec::from_slice(&[IpAddress::Ipv4(
-                    Ipv4Addr::new(192, 168, 32, 120),
+                    // Ipv4Addr::new(192, 168, 32, 120),
+                    Ipv4Addr::new(129, 21, 199, 154),
                 )]))
             });
         info!("Found withrottle servers: {}", withrottle_servers);
@@ -527,7 +600,7 @@ async fn main(spawner: Spawner) {
             line_buffer,
             roster_buffer,
             locomotive_buffer,
-            &HEARTBEAT_DEADLINE,
+            &HEARTBEAT_INTERVAL,
         )
         .await
         {

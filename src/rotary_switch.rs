@@ -26,15 +26,19 @@ impl<'a> RotarySwitch<'a> {
         }
     }
 
-    pub fn read(&mut self) -> u8 {
+    pub fn read(&mut self) -> Option<u8> {
         let mut value = 0;
         for (index, pin) in self.pins.iter().enumerate() {
-            value |= (pin.is_high() as u8) << index;
+            value |= (pin.is_low() as u8) << index;
         }
-        defmt::assert!(
-            value < 10,
-            "Did you buy a fancier rotary switch? I thought we only had 10 positions..."
-        );
-        value
+        if value < 10 {
+            Some(value)
+        } else {
+            defmt::warn!(
+                "Did you buy a fancier rotary switch? I thought we only had 10 positions... Value was {}",
+                value
+            );
+            None
+        }
     }
 }

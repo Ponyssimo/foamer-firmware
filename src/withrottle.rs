@@ -1,5 +1,5 @@
 use crate::buf_reader::{BufReader, BufReaderError, ReadLineError};
-use crate::profile::{Address, Profile};
+use crate::profile::{Address, Function, Profile};
 use crate::{
     CancellationSignal, ReverserPosition, TRIPLE_SWITCH_FUNCTION_COUNT, TRIPLE_SWITCHES,
     USER_BUTTONS,
@@ -45,8 +45,7 @@ pub struct WiThrottleClient<'a, Conn: Read + Write> {
     line_buffer: &'a mut [u8; 4096],
     roster_buffer: &'a mut heapless_latest::String<4096>,
     locomotive_buffer: &'a mut heapless_latest::String<4096>,
-    heartbeat_interval: Duration,
-    heartbeat_deadline: &'a Signal<CriticalSectionRawMutex, Instant>,
+    heartbeat_interval: &'a Signal<CriticalSectionRawMutex, Duration>,
 
     direction: ReverserPosition,
     speed: u8,
@@ -93,7 +92,7 @@ where
         line_buffer: &'a mut [u8; 4096],
         roster_buffer: &'a mut heapless_latest::String<4096>,
         locomotive_buffer: &'a mut heapless_latest::String<4096>,
-        heartbeat_deadline: &'a Signal<CriticalSectionRawMutex, Instant>,
+        heartbeat_interval: &'a Signal<CriticalSectionRawMutex, Duration>,
     ) -> Result<Self, WiThrottleError> {
         roster_buffer.clear();
         locomotive_buffer.clear();
@@ -105,8 +104,7 @@ where
             line_buffer,
             roster_buffer,
             locomotive_buffer,
-            heartbeat_interval: Duration::MAX,
-            heartbeat_deadline,
+            heartbeat_interval,
             speed: 0,
             direction: Default::default(),
         };
@@ -171,9 +169,13 @@ where
         let line = str::from_utf8(line).map_err(|_| WiThrottleError::ProtocolError)?;
 
         if let Some(line) = line.strip_prefix("*") {
-            self.heartbeat_interval =
-                Duration::from_secs(line.parse().map_err(|_| WiThrottleError::ProtocolError)?);
+            self.heartbeat_interval.signal(Duration::from_secs(
+                line.parse::<u64>()
+                    .map_err(|_| WiThrottleError::ProtocolError)?
+                    / 2u64,
+            ));
             self.heartbeat().await?;
+            defmt::info!("Ran heartbeat");
         } else if let Some(line) = line.strip_prefix("M0L") {
             defmt::info!("This is info about a locomotive! {}", line);
             let type_char = defmt::unwrap!(line.chars().next());
@@ -212,6 +214,18 @@ where
     }
 
     async fn handle_locomotive(&mut self) -> Result<(), WiThrottleError> {
+        for function in self.functions.iter_mut() {
+            function.withrottle_id = None;
+        }
+        for (index, function) in self.profile.functions.iter().enumerate() {
+            if let Some(Function::Hardcoded { id }) = function {
+                self.functions[index] = FunctionData {
+                    withrottle_id: Some(*id as usize),
+                    state: false,
+                };
+            }
+        }
+
         if self.locomotive_buffer.is_empty() {
             defmt::info!(
                 "Tried to handle locomotive, but it doesn't look like we have one in our buffer"
@@ -219,14 +233,13 @@ where
             return Ok(());
         }
         let list = self.locomotive_buffer.as_str();
-        for function in self.functions.iter_mut() {
-            function.withrottle_id = None;
-        }
         let mut profile_function_needs_update = [false; PROFILE_FUNCTION_COUNT];
         for (index, function_label) in list.split("]\\[").enumerate() {
             for (profile_index, profile_function) in self.profile.functions.iter().enumerate() {
-                if let Some(profile_function) = profile_function
-                    && profile_function.label == function_label
+                if let Some(Function::Label {
+                    label: profile_function,
+                }) = profile_function
+                    && profile_function == function_label
                 {
                     defmt::info!(
                         "Found info about a function we care about: {}. It is at {}",
@@ -292,6 +305,13 @@ where
                     break;
                 }
             }
+        } else {
+            let address = self.profile.address;
+            defmt::info!(
+                "Manually adding locomotive at address {}... I hate this system",
+                address
+            );
+            self.add_locomotive(address).await?;
         }
         Ok(())
     }
@@ -374,6 +394,7 @@ where
                     .as_bytes(),
                 )
                 .await?;
+            self.connection.write_all(b"\n").await?;
         }
         Ok(())
     }
@@ -420,11 +441,6 @@ where
     }
 
     pub async fn heartbeat(&mut self) -> Result<(), WiThrottleError> {
-        self.heartbeat_deadline.signal(
-            Instant::now()
-                .checked_add(self.heartbeat_interval)
-                .unwrap_or(Instant::MAX),
-        );
         self.connection.write_all(b"*\n").await?;
         Ok(())
     }
