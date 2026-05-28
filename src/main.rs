@@ -22,6 +22,7 @@ use embassy_rp::Peri;
 use embassy_rp::adc::{self, Adc};
 use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::RoscRng;
+use embassy_rp::dma;
 use embassy_rp::gpio::{Input, Level, Output, Pin, Pull};
 use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
@@ -35,7 +36,10 @@ use static_cell::StaticCell;
 use strum::VariantArray;
 use {defmt_rtt as _, panic_probe as _};
 
-use crate::profile::{Address, Function, Profile};
+use crate::profile::{
+    Address, BRAKE_START_INDEX, Function, HORN_INDEX, Profile, TRIPLE_SWITCH_FUNCTION_COUNT,
+    TRIPLE_SWITCH_START_INDEX, TRIPLE_SWITCHES, USER_BUTTONS,
+};
 use crate::withrottle::{WiThrottleClient, WiThrottleError};
 
 mod buf_reader;
@@ -46,6 +50,7 @@ mod withrottle;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
+    DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>;
     ADC_IRQ_FIFO => adc::InterruptHandler;
 });
 
@@ -107,8 +112,6 @@ pub enum ReverserPosition {
     Forwards,
 }
 
-const TRIPLE_SWITCHES: usize = 3;
-
 struct TripleSwitchInputs<'a> {
     switches: [TripleSwitch<'a>; TRIPLE_SWITCHES],
 }
@@ -132,8 +135,6 @@ impl<'a> TripleSwitchInputs<'a> {
         join_array(self.switches.each_mut().map(|switch| switch.read()))
     }
 }
-
-const USER_BUTTONS: usize = 6;
 
 struct UserInputs<'a> {
     user: [Input<'a>; USER_BUTTONS],
@@ -233,17 +234,13 @@ async fn read_reverser_encoder(mut encoder: PioEncoder<'static, PIO0, 2>) {
 
 #[derive(VariantArray, Format, Clone, Copy, PartialEq, Eq)]
 #[repr(usize)]
-enum BrakeState {
+pub enum BrakeState {
     Released,
     Brake1,
     Brake2,
     Brake3,
     Emergency,
 }
-
-const TRIPLE_SWITCH_FUNCTION_COUNT: usize = TripleSwitchState::Down as usize + 1;
-const BRAKE_COUNT: usize = BrakeState::Emergency as usize + 1;
-const BRAKE_START_INDEX: usize = USER_BUTTONS + (TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT);
 
 trait OptionArrayExt<const N: usize> {
     type Inner;
@@ -269,18 +266,20 @@ async fn read_triple_switches(mut triple_switch_inputs: TripleSwitchInputs<'stat
             old.transpose().into_iter(),
             new.into_iter(),
         )
-        .filter(|(old, new)| *old != Some(*new))
         .enumerate()
+        .filter(|(_, (old, new))| *old != Some(*new))
         {
             submit_request(WiThrottleRequest::SetFunctionState(
-                USER_BUTTONS + (index * TRIPLE_SWITCH_FUNCTION_COUNT) + (new as usize),
+                TRIPLE_SWITCH_START_INDEX + (index * TRIPLE_SWITCH_FUNCTION_COUNT) + (new as usize),
                 true,
             ))
             .await;
 
             if let Some(old) = old {
                 submit_request(WiThrottleRequest::SetFunctionState(
-                    USER_BUTTONS + (index * TRIPLE_SWITCH_FUNCTION_COUNT) + (old as usize),
+                    TRIPLE_SWITCH_START_INDEX
+                        + (index * TRIPLE_SWITCH_FUNCTION_COUNT)
+                        + (old as usize),
                     false,
                 ))
                 .await;
@@ -299,8 +298,9 @@ async fn read_potentiometers(
     mut horn: adc::Channel<'static>,
     mut pot_drv: Output<'static>,
 ) {
-    let mut last_horn = 0;
+    let mut horn_released = None::<u16>;
     let mut last_brake_state = BrakeState::Released;
+    let mut last_horn_state = false;
     loop {
         pot_drv.set_high();
         // Make sure the electricity is flowing!
@@ -308,6 +308,20 @@ async fn read_potentiometers(
         let brake = defmt::unwrap!(adc.read(&mut brake).await, "Brake conversion error");
         let horn = defmt::unwrap!(adc.read(&mut horn).await, "Horn conversion error");
         pot_drv.set_low();
+
+        match horn_released {
+            Some(horn_released) => {
+                let horn_state = horn.abs_diff(horn_released) > 100;
+                if horn_state != last_horn_state {
+                    submit_request(WiThrottleRequest::SetFunctionState(HORN_INDEX, horn_state))
+                        .await;
+                    last_horn_state = horn_state;
+                }
+            }
+            None => {
+                horn_released = Some(horn);
+            }
+        }
 
         // Brake stuff
         {
@@ -333,8 +347,6 @@ async fn read_potentiometers(
             }
             last_brake_state = brake_state;
         }
-
-        last_horn = horn;
 
         Timer::after(Duration::from_millis(500)).await;
     }
@@ -363,7 +375,7 @@ async fn withrottle_heartbeat(rx: &'static Signal<CriticalSectionRawMutex, Durat
 
 #[embassy_executor::task]
 async fn cyw43_task(
-    runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
+    runner: cyw43::Runner<'static, cyw43::SpiBus<Output<'static>, PioSpi<'static, PIO0, 0>>>,
 ) -> ! {
     runner.run().await
 }
@@ -398,14 +410,16 @@ async fn main(spawner: Spawner) {
         *STATUS_LIGHT.borrow_ref_mut(cs) = Some(status_light);
     });
 
-    // let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
-    // let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
+    // let fw = cyw43::aligned_bytes!("../cyw43-firmware/43439A0.bin");
+    // let clm = cyw43::aligned_bytes!("../cyw43-firmware/43439A0_clm.bin");
     // To make flashing faster for development, you may want to flash the firmwares independently
     // at hardcoded addresses, instead of baking them into the program with `include_bytes!`:
     //     probe-rs download 43439A0.bin --binary-format bin --chip RP2040 --base-address 0x10100000
     //     probe-rs download 43439A0_clm.bin --binary-format bin --chip RP2040 --base-address 0x10140000
     let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 230321) };
+    let fw = unsafe { &*(fw as *const [u8] as *const cyw43::Aligned<cyw43::A4, [u8]>) };
     let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
+    let nvram = cyw43::aligned_bytes!("../cyw43-firmware/nvram_rp2040.bin");
 
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);
@@ -418,23 +432,25 @@ async fn main(spawner: Spawner) {
         cs,
         p.PIN_24,
         p.PIN_29,
-        p.DMA_CH0,
+        embassy_rp::dma::Channel::new(p.DMA_CH0, Irqs),
     );
 
     let prg = PioEncoderProgram::new(&mut pio.common);
     let throttle_encoder = PioEncoder::new(&mut pio.common, pio.sm1, p.PIN_3, p.PIN_4, &prg);
     // This one is backwards!
     let reverser_encoder = PioEncoder::new(&mut pio.common, pio.sm2, p.PIN_5, p.PIN_6, &prg);
-    defmt::unwrap!(spawner.spawn(read_throttle_encoder(throttle_encoder)));
-    defmt::unwrap!(spawner.spawn(read_reverser_encoder(reverser_encoder)));
+    spawner.spawn(defmt::unwrap!(read_throttle_encoder(throttle_encoder)));
+    spawner.spawn(defmt::unwrap!(read_reverser_encoder(reverser_encoder)));
 
     let adc = Adc::new(p.ADC, Irqs, adc::Config::default());
     let horn = adc::Channel::new_pin(p.PIN_26, Pull::None);
     let brake = adc::Channel::new_pin(p.PIN_27, Pull::None);
     let pot_drv = Output::new(p.PIN_19, Level::Low);
-    defmt::unwrap!(spawner.spawn(read_potentiometers(adc, brake, horn, pot_drv)));
+    spawner.spawn(defmt::unwrap!(read_potentiometers(
+        adc, brake, horn, pot_drv
+    )));
 
-    defmt::unwrap!(spawner.spawn(read_function_buttons(UserInputs {
+    spawner.spawn(defmt::unwrap!(read_function_buttons(UserInputs {
         user: [
             // User 1-4
             Input::new(p.PIN_21, Pull::Down),
@@ -448,14 +464,14 @@ async fn main(spawner: Spawner) {
         profile: RotarySwitch::new(p.PIN_13, p.PIN_12, p.PIN_11, p.PIN_10)
     })));
 
-    defmt::unwrap!(spawner.spawn(read_triple_switches(TripleSwitchInputs::new(
-        p.PIN_7, p.PIN_8, p.PIN_9
-    ))));
+    spawner.spawn(defmt::unwrap!(read_triple_switches(
+        TripleSwitchInputs::new(p.PIN_7, p.PIN_8, p.PIN_9)
+    )));
 
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let state = STATE.init(cyw43::State::new());
-    let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, fw).await;
-    defmt::unwrap!(spawner.spawn(cyw43_task(runner)));
+    let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, fw, nvram).await;
+    spawner.spawn(defmt::unwrap!(cyw43_task(runner)));
 
     control.init(clm).await;
     control
@@ -482,13 +498,14 @@ async fn main(spawner: Spawner) {
         seed,
     );
 
-    defmt::unwrap!(spawner.spawn(net_task(runner)));
+    spawner.spawn(defmt::unwrap!(net_task(runner)));
 
     while let Err(err) = control
-        .join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes()))
+        .join("RIT-WiFi", JoinOptions::new_open())
+        // .join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes()))
         .await
     {
-        info!("join failed with status={}", err.status);
+        info!("join failed with status={}", err);
         Timer::after(Duration::from_secs(5)).await;
     }
 
@@ -505,54 +522,90 @@ async fn main(spawner: Spawner) {
 
     static LINE_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
     let line_buffer = LINE_BUFFER.init([0; 4096]);
-    static ROSTER_BUFFER: StaticCell<heapless_latest::String<4096>> = StaticCell::new();
+    static ROSTER_BUFFER: StaticCell<heapless::String<4096>> = StaticCell::new();
     let roster_buffer = ROSTER_BUFFER.init(Default::default());
-    static LOCOMOTIVE_BUFFER: StaticCell<heapless_latest::String<4096>> = StaticCell::new();
+    static LOCOMOTIVE_BUFFER: StaticCell<heapless::String<4096>> = StaticCell::new();
     let locomotive_buffer = LOCOMOTIVE_BUFFER.init(Default::default());
     static PROFILES: StaticCell<[Profile; 10]> = StaticCell::new();
     let profiles = PROFILES.init(core::array::from_fn(|index| Profile {
         address: [
-            0x7430, 0x8104, 0x1068, 0x7421, //
-            0x7420, 0x3600, 0x1957, 0x7421, //
+            0x7430, 0x8104, 0x2303, 0x2304, //
+            0x7420, 0x3600, 0x1957, 0x8014, //
             0x7420, 0x8104,
         ]
         .map(Address::Long)[index],
         functions: [
-            Some(Function::Label {
-                label: defmt::unwrap!("Bell".try_into()),
-            }),
-            Some(Function::Label {
-                label: defmt::unwrap!("Horn".try_into()),
-            }),
-            Some(Function::Label {
-                label: defmt::unwrap!("Amore".try_into()),
+            // User 1-4
+            Some(Function::Hardcoded {
+                id: 8,
+                momentary: false,
             }),
             None,
             None,
             None,
+            Some(Function::Hardcoded {
+                id: 1,
+                momentary: true,
+            }), // Bell
+            Some(Function::Hardcoded {
+                id: 7,
+                momentary: false,
+            }), // Dynamics
             // Tri-Switches
+            // Ditch lights (Up, Middle, Down)
+            Some(Function::Hardcoded {
+                id: 4,
+                momentary: true,
+            }),
             None,
+            Some(Function::Hardcoded {
+                id: 12,
+                momentary: true,
+            }),
+            // Headlight rear (Up, Middle, Down)
+            Some(Function::Hardcoded {
+                id: 10,
+                momentary: true,
+            }),
             None,
+            Some(Function::Hardcoded {
+                id: 11,
+                momentary: true,
+            }),
+            // Headlight front (Up, Middle, Down)
+            Some(Function::Hardcoded {
+                id: 0,
+                momentary: true,
+            }),
             None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            Some(Function::Hardcoded {
+                id: 3,
+                momentary: true,
+            }),
             // Brake
             None,
-            Some(Function::Hardcoded { id: 6 }),
-            Some(Function::Hardcoded { id: 6 }),
-            Some(Function::Hardcoded { id: 6 }),
-            // Emergency
-            None,
+            Some(Function::Hardcoded {
+                id: 31,
+                momentary: true,
+            }),
+            Some(Function::Hardcoded {
+                id: 30,
+                momentary: true,
+            }),
+            Some(Function::Hardcoded {
+                id: 6,
+                momentary: true,
+            }),
+            Some(Function::EmergencyStop), // Emergency
+            Some(Function::Hardcoded {
+                id: 2,
+                momentary: true,
+            }), // Horn
         ],
     }));
 
     static HEARTBEAT_INTERVAL: Signal<CriticalSectionRawMutex, Duration> = Signal::new();
-    let token = spawner.spawn(withrottle_heartbeat(&HEARTBEAT_INTERVAL));
-    defmt::unwrap!(token);
+    spawner.spawn(defmt::unwrap!(withrottle_heartbeat(&HEARTBEAT_INTERVAL)));
 
     loop {
         let client_state = TcpClientState::<1, 4096, 4096>::new();

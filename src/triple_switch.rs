@@ -31,8 +31,9 @@ impl<'a> TripleSwitch<'a> {
         Timer::after(Duration::from_micros(100)).await;
         let down = self.pin.get_level();
         match (up, down) {
-            (Level::High, Level::High) => TripleSwitchState::Up,
-            (Level::Low, Level::Low) => TripleSwitchState::Down,
+            // Backwards from how you'd think...
+            (Level::High, Level::High) => TripleSwitchState::Down,
+            (Level::Low, Level::Low) => TripleSwitchState::Up,
             // Follows our pulls, probably floating
             (Level::High, Level::Low) => TripleSwitchState::Middle,
 

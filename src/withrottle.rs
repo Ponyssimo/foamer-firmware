@@ -1,26 +1,20 @@
 use crate::buf_reader::{BufReader, BufReaderError, ReadLineError};
-use crate::profile::{Address, Function, Profile};
-use crate::{
-    CancellationSignal, ReverserPosition, TRIPLE_SWITCH_FUNCTION_COUNT, TRIPLE_SWITCHES,
-    USER_BUTTONS,
-};
+use crate::profile::{Address, Function, PROFILE_FUNCTION_COUNT, Profile};
+use crate::{CancellationSignal, ReverserPosition};
 use defmt::Format;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Instant};
+use embassy_time::Duration;
 use embedded_io_async::{Read, ReadExactError, Write};
 
 impl Address {
-    fn to_withrottle(self) -> heapless_latest::String<5> {
+    fn to_withrottle(self) -> heapless::String<5> {
         match self {
             Self::Long(long) => {
-                defmt::unwrap!(heapless_latest::format!(5; "L{:04x}", long), "encode long")
+                defmt::unwrap!(heapless::format!(5; "L{:04x}", long), "encode long")
             }
             Self::Short(short) => {
-                defmt::unwrap!(
-                    heapless_latest::format!(5; "S{:02x}", short),
-                    "encode short"
-                )
+                defmt::unwrap!(heapless::format!(5; "S{:02x}", short), "encode short")
             }
         }
     }
@@ -35,16 +29,13 @@ struct FunctionData {
     state: bool,
 }
 
-const PROFILE_FUNCTION_COUNT: usize =
-    USER_BUTTONS + (TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT);
-
 pub struct WiThrottleClient<'a, Conn: Read + Write> {
     functions: [FunctionData; PROFILE_FUNCTION_COUNT],
     connection: BufReader<Conn>,
     profile: &'a Profile,
     line_buffer: &'a mut [u8; 4096],
-    roster_buffer: &'a mut heapless_latest::String<4096>,
-    locomotive_buffer: &'a mut heapless_latest::String<4096>,
+    roster_buffer: &'a mut heapless::String<4096>,
+    locomotive_buffer: &'a mut heapless::String<4096>,
     heartbeat_interval: &'a Signal<CriticalSectionRawMutex, Duration>,
 
     direction: ReverserPosition,
@@ -90,8 +81,8 @@ where
         id: &[u8],
         profile: &'a Profile,
         line_buffer: &'a mut [u8; 4096],
-        roster_buffer: &'a mut heapless_latest::String<4096>,
-        locomotive_buffer: &'a mut heapless_latest::String<4096>,
+        roster_buffer: &'a mut heapless::String<4096>,
+        locomotive_buffer: &'a mut heapless::String<4096>,
         heartbeat_interval: &'a Signal<CriticalSectionRawMutex, Duration>,
     ) -> Result<Self, WiThrottleError> {
         roster_buffer.clear();
@@ -108,6 +99,7 @@ where
             speed: 0,
             direction: Default::default(),
         };
+        this.reset_function_mapping();
 
         // Idenitfy ourselves (ID)
         this.connection.write_all(b"HU").await?;
@@ -135,10 +127,6 @@ where
     }
 
     pub async fn set_profile(&mut self, profile: &'static Profile) -> Result<(), WiThrottleError> {
-        for function in self.functions.iter_mut() {
-            function.withrottle_id = None;
-        }
-
         let new_locomotive = self.profile.address != profile.address;
         if new_locomotive {
             self.locomotive_buffer.clear();
@@ -146,6 +134,8 @@ where
         }
 
         self.profile = profile;
+
+        self.reset_function_mapping();
 
         if new_locomotive {
             // Try and find our locomotive in the roster
@@ -213,18 +203,15 @@ where
         Ok(())
     }
 
-    async fn handle_locomotive(&mut self) -> Result<(), WiThrottleError> {
+    fn reset_function_mapping(&mut self) {
+        defmt::trace!("Resetting function mapping...");
         for function in self.functions.iter_mut() {
             function.withrottle_id = None;
         }
-        for (index, function) in self.profile.functions.iter().enumerate() {
-            if let Some(Function::Hardcoded { id }) = function {
-                self.functions[index] = FunctionData {
-                    withrottle_id: Some(*id as usize),
-                    state: false,
-                };
-            }
-        }
+    }
+
+    async fn handle_locomotive(&mut self) -> Result<(), WiThrottleError> {
+        self.reset_function_mapping();
 
         if self.locomotive_buffer.is_empty() {
             defmt::info!(
@@ -238,6 +225,7 @@ where
             for (profile_index, profile_function) in self.profile.functions.iter().enumerate() {
                 if let Some(Function::Label {
                     label: profile_function,
+                    momentary: _,
                 }) = profile_function
                     && profile_function == function_label
                 {
@@ -339,8 +327,17 @@ where
         self.write_locomotive_action().await?;
         self.connection.write_all(b"s1\n").await?;
 
+        // self.write_locomotive_action().await?;
+        // self.connection.write_all(b"m").await?;
+        // self.connection.write_all(b"1").await?;
+        // if let Some(self.profile.functions
+
+        // Implicitly sends speed update too
         self.set_direction(self.direction).await?;
-        self.set_speed(self.speed).await?;
+
+        for (function_id, _) in self.profile.functions.iter().enumerate() {
+            self.send_function_state(function_id).await?;
+        }
 
         Ok(())
     }
@@ -377,24 +374,78 @@ where
         Ok(())
     }
 
+    async fn write_function_state(
+        &mut self,
+        withrottle_function_id: usize,
+        state: bool,
+        momentary: bool,
+    ) -> Result<(), WiThrottleError> {
+        self.write_locomotive_action().await?;
+        self.connection
+            .write_all(&[b'm', if momentary { b'1' } else { b'0' }])
+            .await?;
+        self.connection
+            .write_all(
+                defmt::unwrap!(
+                    heapless::format!(20; "{withrottle_function_id}\n"),
+                    "Format function id"
+                )
+                .as_bytes(),
+            )
+            .await?;
+        // self.connection
+        //     .write_all(
+        //         defmt::unwrap!(
+        //             heapless::format!(20; "m{momentary}{withrottle_function_id}\n"),
+        //             "Format function id for momentary"
+        //         )
+        //         .as_bytes(),
+        //     )
+        //     .await?;
+
+        self.write_locomotive_action().await?;
+        self.connection
+            .write_all(&[b'F', if state { b'1' } else { b'0' }])
+            .await?;
+        self.connection
+            .write_all(
+                defmt::unwrap!(
+                    heapless::format!(20; "{withrottle_function_id}"),
+                    "Format function id"
+                )
+                .as_bytes(),
+            )
+            .await?;
+        self.connection.write_all(b"\n").await?;
+        Ok(())
+    }
+
     async fn send_function_state(&mut self, function_id: usize) -> Result<(), WiThrottleError> {
         let function = &self.functions[function_id];
-        let state = function.state;
-        if let Some(function_id) = function.withrottle_id {
-            self.write_locomotive_action().await?;
-            self.connection
-                .write_all(&[b'F', if state { b'1' } else { b'0' }])
-                .await?;
-            self.connection
-                .write_all(
-                    defmt::unwrap!(
-                        heapless_latest::format!(20; "{function_id}"),
-                        "Format function id"
-                    )
-                    .as_bytes(),
-                )
-                .await?;
-            self.connection.write_all(b"\n").await?;
+        match self.profile.functions[function_id] {
+            Some(Function::Label {
+                label: _,
+                momentary,
+            }) => {
+                if let Some(function_id) = function.withrottle_id {
+                    self.write_function_state(function_id, function.state, momentary)
+                        .await?;
+                }
+            }
+            Some(Function::Hardcoded {
+                id: function_id,
+                momentary,
+            }) => {
+                self.write_function_state(function_id.into(), function.state, momentary)
+                    .await?;
+            }
+            Some(Function::EmergencyStop) => {
+                if function.state {
+                    self.write_locomotive_action().await?;
+                    self.connection.write_all(b"X").await?;
+                }
+            }
+            None => {}
         }
         Ok(())
     }
@@ -410,16 +461,24 @@ where
         Ok(())
     }
 
-    pub async fn set_speed(&mut self, speed: u8) -> Result<(), WiThrottleError> {
-        self.speed = speed;
+    pub async fn send_speed(&mut self) -> Result<(), WiThrottleError> {
+        let speed = if self.direction == ReverserPosition::Neutral {
+            0
+        } else {
+            self.speed
+        };
         self.write_locomotive_action().await?;
         self.connection.write_all(b"V").await?;
         self.connection
-            .write_all(
-                defmt::unwrap!(heapless_latest::format!(5; "{speed}"), "Format speed").as_bytes(),
-            )
+            .write_all(defmt::unwrap!(heapless::format!(5; "{speed}"), "Format speed").as_bytes())
             .await?;
         self.connection.write_all(b"\n").await?;
+        Ok(())
+    }
+
+    pub async fn set_speed(&mut self, speed: u8) -> Result<(), WiThrottleError> {
+        self.speed = speed;
+        self.send_speed().await?;
         Ok(())
     }
 
@@ -429,14 +488,17 @@ where
     ) -> Result<(), WiThrottleError> {
         self.direction = direction;
         let direction = match direction {
-            ReverserPosition::Reverse => b"0",
-            ReverserPosition::Forwards => b"1",
-            _ => return Ok(()),
+            ReverserPosition::Reverse => Some(b"0"),
+            ReverserPosition::Forwards => Some(b"1"),
+            ReverserPosition::Neutral => None,
         };
-        self.write_locomotive_action().await?;
-        self.connection.write_all(b"R").await?;
-        self.connection.write_all(direction).await?;
-        self.connection.write_all(b"\n").await?;
+        if let Some(direction) = direction {
+            self.write_locomotive_action().await?;
+            self.connection.write_all(b"R").await?;
+            self.connection.write_all(direction).await?;
+            self.connection.write_all(b"\n").await?;
+        }
+        self.send_speed().await?;
         Ok(())
     }
 

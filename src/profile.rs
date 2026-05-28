@@ -1,8 +1,8 @@
+use crate::BrakeState;
+use crate::triple_switch::TripleSwitchState;
 use defmt::Format;
 use heapless::String;
 use serde::{Deserialize, Serialize};
-
-use crate::{BRAKE_COUNT, TRIPLE_SWITCH_FUNCTION_COUNT, TRIPLE_SWITCHES, USER_BUTTONS};
 
 #[derive(Serialize, Deserialize, Eq, Format, Clone, Copy, PartialEq)]
 pub enum Address {
@@ -37,13 +37,24 @@ pub enum Address {
 
 #[derive(Format, Serialize, Deserialize)]
 pub enum Function {
-    Label { label: String<128> },
-    Hardcoded { id: u8 },
+    Label { label: String<32>, momentary: bool },
+    Hardcoded { id: u8, momentary: bool },
+    EmergencyStop,
 }
 
 #[derive(Format, Serialize, Deserialize)]
 pub struct Profile {
     pub address: Address,
-    pub functions: [Option<Function>;
-        USER_BUTTONS + (TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT) + BRAKE_COUNT],
+    pub functions: [Option<Function>; PROFILE_FUNCTION_COUNT],
 }
+
+pub const USER_BUTTONS: usize = 6;
+pub const TRIPLE_SWITCHES: usize = 3;
+pub const TRIPLE_SWITCH_FUNCTION_COUNT: usize = TripleSwitchState::Down as usize + 1;
+pub const BRAKE_COUNT: usize = BrakeState::Emergency as usize + 1;
+
+pub const TRIPLE_SWITCH_START_INDEX: usize = USER_BUTTONS;
+pub const BRAKE_START_INDEX: usize =
+    TRIPLE_SWITCH_START_INDEX + (TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT);
+pub const HORN_INDEX: usize = BRAKE_START_INDEX + BRAKE_COUNT;
+pub const PROFILE_FUNCTION_COUNT: usize = HORN_INDEX + 1;
