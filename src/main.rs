@@ -13,6 +13,7 @@ use critical_section::Mutex;
 use cyw43::JoinOptions;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
 use defmt::*;
+use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_futures::join::join_array;
 use embassy_net::dns::{DnsQueryType, DnsSocket};
@@ -24,17 +25,20 @@ use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::dma;
 use embassy_rp::gpio::{Input, Level, Output, Pin, Pull};
-use embassy_rp::peripherals::{DMA_CH0, PIO0};
+use embassy_rp::peripherals::{DMA_CH0, PIO0, USB};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::pio_programs::rotary_encoder::{Direction, PioEncoder, PioEncoderProgram};
+use embassy_rp::usb::{self, Driver, Instance};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::{Channel, TrySendError};
+use embassy_sync::channel::{Channel, Receiver, Sender, TrySendError};
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, TimeoutError, Timer};
+use embassy_usb::UsbDevice;
+use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embedded_nal_async::TcpConnect;
+use panic_probe as _;
 use static_cell::StaticCell;
 use strum::VariantArray;
-use {defmt_rtt as _, panic_probe as _};
 
 use crate::profile::{
     Address, BRAKE_START_INDEX, Function, HORN_INDEX, Profile, TRIPLE_SWITCH_FUNCTION_COUNT,
@@ -52,6 +56,7 @@ bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
     DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>;
     ADC_IRQ_FIFO => adc::InterruptHandler;
+    // USBCTRL_IRQ => usb::InterruptHandler<USB>;
 });
 
 pub type CancellationSignal = Signal<CriticalSectionRawMutex, ()>;
@@ -301,6 +306,7 @@ async fn read_potentiometers(
     let mut horn_released = None::<u16>;
     let mut last_brake_state = BrakeState::Released;
     let mut last_horn_state = false;
+    let mut brake_released = None::<u16>;
     loop {
         pot_drv.set_high();
         // Make sure the electricity is flowing!
@@ -308,11 +314,14 @@ async fn read_potentiometers(
         let brake = defmt::unwrap!(adc.read(&mut brake).await, "Brake conversion error");
         let horn = defmt::unwrap!(adc.read(&mut horn).await, "Horn conversion error");
         pot_drv.set_low();
+        defmt::info!("Horn value is {}", horn);
 
         match horn_released {
             Some(horn_released) => {
-                let horn_state = horn.abs_diff(horn_released) > 100;
+                // Horn apply causes horn value to DECREASE
+                let horn_state = horn < horn_released && (horn_released - horn > 250);
                 if horn_state != last_horn_state {
+                    defmt::warn!("Horn state now: {}", horn_state);
                     submit_request(WiThrottleRequest::SetFunctionState(HORN_INDEX, horn_state))
                         .await;
                     last_horn_state = horn_state;
@@ -323,30 +332,36 @@ async fn read_potentiometers(
             }
         }
 
-        // Brake stuff
-        {
-            let min = 500u16;
-            let max = 2800u16;
-            let step = (max - min) / BrakeState::VARIANTS.len() as u16;
-            let mut brake_state = BrakeState::Released;
-            for (index, state) in BrakeState::VARIANTS.iter().copied().enumerate() {
-                let index = index as u16;
-                if brake > min + (step * index) {
-                    brake_state = state;
-                }
-            }
-            if brake_state != last_brake_state {
+        match brake_released {
+            Some(brake_released) => {
+                let min = brake_released;
+                let max = brake_released + 2000u16;
+                let step = (max - min) / BrakeState::VARIANTS.len() as u16;
+                let mut brake_state = BrakeState::Released;
                 for (index, state) in BrakeState::VARIANTS.iter().copied().enumerate() {
                     let index = index as u16;
-                    submit_request(WiThrottleRequest::SetFunctionState(
-                        BRAKE_START_INDEX + index as usize,
-                        brake_state == state,
-                    ))
-                    .await;
+                    if brake > min + (step * index) {
+                        brake_state = state;
+                    }
                 }
+                if brake_state != last_brake_state {
+                    for (index, state) in BrakeState::VARIANTS.iter().copied().enumerate() {
+                        let index = index as u16;
+                        submit_request(WiThrottleRequest::SetFunctionState(
+                            BRAKE_START_INDEX + index as usize,
+                            brake_state == state,
+                        ))
+                        .await;
+                    }
+                }
+                last_brake_state = brake_state;
             }
-            last_brake_state = brake_state;
+            None => {
+                brake_released = Some(brake);
+            }
         }
+
+        // Brake stuff
 
         Timer::after(Duration::from_millis(500)).await;
     }
@@ -394,6 +409,40 @@ pub enum WiThrottleRequest {
     Heartbeat,
 }
 
+// #[embassy_executor::task]
+// async fn write_serial_task(
+//     mut serial: CdcAcmClass<'static, Driver<'static, USB>>,
+//     rx: Receiver<'static, CriticalSectionRawMutex, heapless::Vec<u8, 8>, 100>,
+// ) -> ! {
+//     loop {
+//         let packet = rx.receive().await;
+//         defmt::unwrap!(serial.write_packet(&packet).await);
+//     }
+// }
+
+// #[embassy_executor::task]
+// async fn usb_task(mut usb: UsbDevice<'static, Driver<'static, USB>>) -> ! {
+//     usb.run().await
+// }
+
+// #[derive(Format)]
+// struct AcmSerial<'a>(Sender<'a, CriticalSectionRawMutex, heapless::Vec<u8, 8>, 100>);
+
+// impl<'a> defmt_serial::EraseWrite for AcmSerial<'a> {
+//     fn write(&mut self, buf: &[u8]) {
+//         for chunk in buf.chunks(8) {
+//             let buf = defmt::unwrap!(heapless::Vec::<u8, 8>::from_slice(chunk));
+//             if let Err(err) = self.0.try_send(buf) {
+//                 defmt::error!("Acm error: {}", err);
+//             }
+//         }
+//     }
+
+//     fn flush(&mut self) {
+//         defmt::trace!("I should be flushing...");
+//     }
+// }
+
 static WITHROTTLE_COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, WiThrottleRequest, 16> =
     Channel::new();
 static CANCELLATION_SIGNAL: CancellationSignal = CancellationSignal::new();
@@ -405,20 +454,80 @@ async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     let mut rng = RoscRng;
 
-    let status_light = Output::new(p.PIN_14, Level::Low);
+    let status_light = Output::new(p.PIN_14, Level::High);
     critical_section::with(|cs| {
         *STATUS_LIGHT.borrow_ref_mut(cs) = Some(status_light);
     });
+    let mut connected_light = Output::new(p.PIN_15, Level::Low);
 
-    // let fw = cyw43::aligned_bytes!("../cyw43-firmware/43439A0.bin");
-    // let clm = cyw43::aligned_bytes!("../cyw43-firmware/43439A0_clm.bin");
+    // // USB shit
+
+    // // Create the driver, from the HAL.
+    // let driver = Driver::new(p.USB, Irqs);
+
+    // // Create embassy-usb Config
+    // let config = {
+    //     let mut config = embassy_usb::Config::new(0x0424, 0x274e);
+    //     config.manufacturer = Some("Embassy");
+    //     config.product = Some("USB-serial example");
+    //     config.serial_number = Some("12345678");
+    //     config.max_power = 100;
+    //     config.max_packet_size_0 = 64;
+    //     config
+    // };
+
+    // // Create embassy-usb DeviceBuilder using the driver and config.
+    // // It needs some buffers for building the descriptors.
+    // let mut builder = {
+    //     static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
+    //     static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
+    //     static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+
+    //     let builder = embassy_usb::Builder::new(
+    //         driver,
+    //         config,
+    //         CONFIG_DESCRIPTOR.init([0; 256]),
+    //         BOS_DESCRIPTOR.init([0; 256]),
+    //         &mut [], // no msos descriptors
+    //         CONTROL_BUF.init([0; 64]),
+    //     );
+    //     builder
+    // };
+
+    // // Create classes on the builder.
+    // let serial = {
+    //     static STATE: StaticCell<State> = StaticCell::new();
+    //     let state = STATE.init(State::new());
+    //     CdcAcmClass::new(&mut builder, state, 64)
+    // };
+
+    // // Build the builder.
+    // let usb = builder.build();
+
+    // // static SERIAL: StaticCell<CdcAcmClass<Driver<'static, USB>>> = StaticCell::new();
+    // // let serial = SERIAL.init(serial);
+    // static CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, heapless::Vec<u8, 8>, 100>> =
+    //     StaticCell::new();
+    // let channel = CHANNEL.init(Channel::new());
+
+    // spawner.spawn(unwrap!(write_serial_task(serial, channel.receiver())));
+
+    // static ACM_SERIAL: StaticCell<AcmSerial<'static>> = StaticCell::new();
+    // let acm_serial = ACM_SERIAL.init(AcmSerial(channel.sender()));
+    // defmt_serial::defmt_serial(acm_serial);
+
+    // Run the USB device.
+    // spawner.spawn(unwrap!(usb_task(usb)));
+
+    let fw = cyw43::aligned_bytes!("../cyw43-firmware/43439A0.bin");
+    let clm = cyw43::aligned_bytes!("../cyw43-firmware/43439A0_clm.bin");
     // To make flashing faster for development, you may want to flash the firmwares independently
     // at hardcoded addresses, instead of baking them into the program with `include_bytes!`:
     //     probe-rs download 43439A0.bin --binary-format bin --chip RP2040 --base-address 0x10100000
     //     probe-rs download 43439A0_clm.bin --binary-format bin --chip RP2040 --base-address 0x10140000
-    let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 230321) };
-    let fw = unsafe { &*(fw as *const [u8] as *const cyw43::Aligned<cyw43::A4, [u8]>) };
-    let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
+    // let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 230321) };
+    // let fw = unsafe { &*(fw as *const [u8] as *const cyw43::Aligned<cyw43::A4, [u8]>) };
+    // let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
     let nvram = cyw43::aligned_bytes!("../cyw43-firmware/nvram_rp2040.bin");
 
     let pwr = Output::new(p.PIN_23, Level::Low);
@@ -517,6 +626,12 @@ async fn main(spawner: Spawner) {
 
     // And now we can use it!
     info!("Stack is up!");
+    connected_light.set_high();
+    critical_section::with(|cs| {
+        if let Some(output) = STATUS_LIGHT.borrow_ref_mut(cs).as_mut() {
+            output.set_low();
+        }
+    });
 
     // And now we can use it!
 
@@ -663,6 +778,10 @@ async fn main(spawner: Spawner) {
                 continue;
             }
         };
+
+        connected_light.set_high();
+        Timer::after(Duration::from_secs(1)).await;
+        connected_light.set_low();
 
         loop {
             while let Ok(message) = WITHROTTLE_COMMAND_CHANNEL.try_receive() {

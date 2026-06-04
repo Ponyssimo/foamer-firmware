@@ -439,13 +439,11 @@ where
                 self.write_function_state(function_id.into(), function.state, momentary)
                     .await?;
             }
-            Some(Function::EmergencyStop) => {
-                if function.state {
-                    self.write_locomotive_action().await?;
-                    self.connection.write_all(b"X").await?;
-                }
+            Some(Function::EmergencyStop) if function.state => {
+                self.write_locomotive_action().await?;
+                self.connection.write_all(b"X").await?;
             }
-            None => {}
+            Some(Function::EmergencyStop) | None => {}
         }
         Ok(())
     }
