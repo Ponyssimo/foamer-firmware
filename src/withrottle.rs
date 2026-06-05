@@ -1,6 +1,8 @@
 use crate::buf_reader::{BufReader, BufReaderError, ReadLineError};
-use crate::profile::{Address, Function, PROFILE_FUNCTION_COUNT, Profile};
+use crate::profile::{Address, Config, Function, PROFILE_FUNCTION_COUNT, Profile};
 use crate::{CancellationSignal, ReverserPosition};
+use core::cell::RefCell;
+use critical_section::Mutex;
 use defmt::Format;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -29,10 +31,31 @@ struct FunctionData {
     state: bool,
 }
 
+pub struct ProfileWrapper {
+    pub mutex: &'static Mutex<RefCell<Config>>,
+    pub profile_index: usize,
+}
+impl ProfileWrapper {
+    fn with<T>(&self, f: impl FnMut(&Profile) -> T) -> T {
+        self.with_profile_at_index(self.profile_index, f)
+    }
+    fn with_profile_at_index<T>(
+        &self,
+        profile_index: usize,
+        mut f: impl FnMut(&Profile) -> T,
+    ) -> T {
+        critical_section::with(|cs| {
+            let config = self.mutex.borrow_ref(cs);
+            f(&config.profiles[profile_index])
+        })
+    }
+}
+
 pub struct WiThrottleClient<'a, Conn: Read + Write> {
     functions: [FunctionData; PROFILE_FUNCTION_COUNT],
     connection: BufReader<Conn>,
-    profile: &'a Profile,
+    profile: ProfileWrapper,
+    address: Address,
     line_buffer: &'a mut [u8; 4096],
     roster_buffer: &'a mut heapless::String<4096>,
     locomotive_buffer: &'a mut heapless::String<4096>,
@@ -79,7 +102,7 @@ where
     pub async fn new(
         connection: Conn,
         id: &[u8],
-        profile: &'a Profile,
+        profile: ProfileWrapper,
         line_buffer: &'a mut [u8; 4096],
         roster_buffer: &'a mut heapless::String<4096>,
         locomotive_buffer: &'a mut heapless::String<4096>,
@@ -90,6 +113,7 @@ where
 
         let mut this = Self {
             connection: connection.into(),
+            address: profile.with(|profile| profile.address),
             profile,
             functions: Default::default(),
             line_buffer,
@@ -126,14 +150,18 @@ where
         Ok(this)
     }
 
-    pub async fn set_profile(&mut self, profile: &'static Profile) -> Result<(), WiThrottleError> {
-        let new_locomotive = self.profile.address != profile.address;
+    pub async fn set_profile(&mut self, profile_index: usize) -> Result<(), WiThrottleError> {
+        let new_locomotive = self.address
+            != self
+                .profile
+                .with_profile_at_index(profile_index, |profile| profile.address);
         if new_locomotive {
             self.locomotive_buffer.clear();
             self.remove_locomotive().await?;
         }
 
-        self.profile = profile;
+        self.profile.profile_index = profile_index;
+        self.address = self.profile.with(|profile| profile.address);
 
         self.reset_function_mapping();
 
@@ -176,7 +204,7 @@ where
                 _ => defmt::unimplemented!(),
             };
             // I don't care about this one
-            if address != self.profile.address {
+            if address != self.address {
                 return Ok(());
             }
             defmt::info!("This is info about OUR locomotive! {} {}", address, line);
@@ -221,24 +249,26 @@ where
         }
         let list = self.locomotive_buffer.as_str();
         let mut profile_function_needs_update = [false; PROFILE_FUNCTION_COUNT];
-        for (index, function_label) in list.split("]\\[").enumerate() {
-            for (profile_index, profile_function) in self.profile.functions.iter().enumerate() {
-                if let Some(Function::Label {
-                    label: profile_function,
-                    momentary: _,
-                }) = profile_function
-                    && profile_function == function_label
-                {
-                    defmt::info!(
-                        "Found info about a function we care about: {}. It is at {}",
-                        function_label,
-                        index
-                    );
-                    self.functions[profile_index].withrottle_id = Some(index);
-                    profile_function_needs_update[profile_index] = true;
+        self.profile.with(|profile| {
+            for (index, function_label) in list.split("]\\[").enumerate() {
+                for (profile_index, profile_function) in profile.functions.iter().enumerate() {
+                    if let Some(Function::Label {
+                        label: profile_function,
+                        momentary: _,
+                    }) = profile_function
+                        && profile_function == function_label
+                    {
+                        defmt::info!(
+                            "Found info about a function we care about: {}. It is at {}",
+                            function_label,
+                            index
+                        );
+                        self.functions[profile_index].withrottle_id = Some(index);
+                        profile_function_needs_update[profile_index] = true;
+                    }
                 }
             }
-        }
+        });
 
         for profile_index in profile_function_needs_update
             .into_iter()
@@ -287,14 +317,14 @@ where
                         return Err(WiThrottleError::ProtocolError);
                     }
                 };
-                if self.profile.address == address {
+                if self.address == address {
                     defmt::info!("This roster entry is us! {} / {}", name, address);
                     self.add_locomotive(address).await?;
                     break;
                 }
             }
         } else {
-            let address = self.profile.address;
+            let address = self.address;
             defmt::info!(
                 "Manually adding locomotive at address {}... I hate this system",
                 address
@@ -335,7 +365,7 @@ where
         // Implicitly sends speed update too
         self.set_direction(self.direction).await?;
 
-        for (function_id, _) in self.profile.functions.iter().enumerate() {
+        for function_id in 0..self.functions.len() {
             self.send_function_state(function_id).await?;
         }
 
@@ -368,7 +398,7 @@ where
         self.write_throttle().await?;
         self.connection.write_all(b"A").await?;
         self.connection
-            .write_all(self.profile.address.to_withrottle().as_bytes())
+            .write_all(self.address.to_withrottle().as_bytes())
             .await?;
         self.connection.write_all(b"<;>").await?;
         Ok(())
@@ -422,7 +452,11 @@ where
 
     async fn send_function_state(&mut self, function_id: usize) -> Result<(), WiThrottleError> {
         let function = &self.functions[function_id];
-        match self.profile.functions[function_id] {
+        // Unnecessary clone of the label, but boohoo
+        match self
+            .profile
+            .with(|profile| profile.functions[function_id].clone())
+        {
             Some(Function::Label {
                 label: _,
                 momentary,

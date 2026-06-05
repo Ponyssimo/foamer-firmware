@@ -18,7 +18,7 @@ use embassy_executor::Spawner;
 use embassy_futures::join::join_array;
 use embassy_net::dns::{DnsQueryType, DnsSocket};
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
-use embassy_net::{Config, IpAddress, StackResources};
+use embassy_net::{Config as NetConfig, IpAddress, StackResources};
 use embassy_rp::Peri;
 use embassy_rp::adc::{self, Adc};
 use embassy_rp::bind_interrupts;
@@ -28,26 +28,37 @@ use embassy_rp::gpio::{Input, Level, Output, Pin, Pull};
 use embassy_rp::peripherals::{DMA_CH0, PIO0, USB};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::pio_programs::rotary_encoder::{Direction, PioEncoder, PioEncoderProgram};
-use embassy_rp::usb::{self, Driver, Instance};
+use embassy_rp::usb::{self, Driver};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::{Channel, Receiver, Sender, TrySendError};
+use embassy_sync::channel::{Channel, TrySendError};
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, TimeoutError, Timer};
-use embassy_usb::UsbDevice;
-use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+use embassy_usb::class::{
+    // cdc_acm::{CdcAcmClass, State},
+    web_usb::{Config as WebUsbConfig, State, Url, WebUsb},
+};
+use embassy_usb::{
+    UsbDevice,
+    msos::{self, windows_version},
+};
 use embedded_nal_async::TcpConnect;
 use panic_probe as _;
 use static_cell::StaticCell;
 use strum::VariantArray;
 
+use crate::flash::FlashCommand;
 use crate::profile::{
-    Address, BRAKE_START_INDEX, Function, HORN_INDEX, Profile, TRIPLE_SWITCH_FUNCTION_COUNT,
-    TRIPLE_SWITCH_START_INDEX, TRIPLE_SWITCHES, USER_BUTTONS,
+    BRAKE_START_INDEX, Config, HORN_INDEX, TRIPLE_SWITCH_FUNCTION_COUNT, TRIPLE_SWITCH_START_INDEX,
+    TRIPLE_SWITCHES, USER_BUTTONS,
 };
-use crate::withrottle::{WiThrottleClient, WiThrottleError};
+use crate::profile_usb::ProfileUsbEndpoints;
+use crate::withrottle::{ProfileWrapper, WiThrottleClient, WiThrottleError};
 
 mod buf_reader;
+mod flash;
 mod profile;
+mod profile_usb;
+mod profile_usb_types;
 mod rotary_switch;
 mod triple_switch;
 mod withrottle;
@@ -56,13 +67,10 @@ bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
     DMA_IRQ_0 => dma::InterruptHandler<DMA_CH0>;
     ADC_IRQ_FIFO => adc::InterruptHandler;
-    // USBCTRL_IRQ => usb::InterruptHandler<USB>;
+    USBCTRL_IRQ => usb::InterruptHandler<USB>;
 });
 
 pub type CancellationSignal = Signal<CriticalSectionRawMutex, ()>;
-
-const WIFI_NETWORK: &str = "parkerhouse"; // change to your network SSID
-const WIFI_PASSWORD: &str = "password"; // change to your network password
 
 static STATUS_LIGHT: Mutex<RefCell<Option<Output<'static>>>> = Mutex::new(RefCell::new(None));
 
@@ -420,10 +428,10 @@ pub enum WiThrottleRequest {
 //     }
 // }
 
-// #[embassy_executor::task]
-// async fn usb_task(mut usb: UsbDevice<'static, Driver<'static, USB>>) -> ! {
-//     usb.run().await
-// }
+#[embassy_executor::task]
+async fn usb_task(mut usb: UsbDevice<'static, Driver<'static, USB>>) -> ! {
+    usb.run().await
+}
 
 // #[derive(Format)]
 // struct AcmSerial<'a>(Sender<'a, CriticalSectionRawMutex, heapless::Vec<u8, 8>, 100>);
@@ -447,6 +455,83 @@ static WITHROTTLE_COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, WiThrottleRe
     Channel::new();
 static CANCELLATION_SIGNAL: CancellationSignal = CancellationSignal::new();
 
+// let profiles = PROFILES.init(core::array::from_fn(|index| Profile {
+//     address: [
+//         0x7430, 0x8104, 0x2303, 0x2304, //
+//         0x7420, 0x3600, 0x1957, 0x8014, //
+//         0x7420, 0x8104,
+//     ]
+//     .map(Address::Long)[index],
+//     functions: [
+//         // User 1-4
+//         Some(Function::Hardcoded {
+//             id: 8,
+//             momentary: false,
+//         }),
+//         None,
+//         None,
+//         None,
+//         Some(Function::Hardcoded {
+//             id: 1,
+//             momentary: true,
+//         }), // Bell
+//         Some(Function::Hardcoded {
+//             id: 7,
+//             momentary: false,
+//         }), // Dynamics
+//         // Tri-Switches
+//         // Ditch lights (Up, Middle, Down)
+//         Some(Function::Hardcoded {
+//             id: 4,
+//             momentary: true,
+//         }),
+//         None,
+//         Some(Function::Hardcoded {
+//             id: 12,
+//             momentary: true,
+//         }),
+//         // Headlight rear (Up, Middle, Down)
+//         Some(Function::Hardcoded {
+//             id: 10,
+//             momentary: true,
+//         }),
+//         None,
+//         Some(Function::Hardcoded {
+//             id: 11,
+//             momentary: true,
+//         }),
+//         // Headlight front (Up, Middle, Down)
+//         Some(Function::Hardcoded {
+//             id: 0,
+//             momentary: true,
+//         }),
+//         None,
+//         Some(Function::Hardcoded {
+//             id: 3,
+//             momentary: true,
+//         }),
+//         // Brake
+//         None,
+//         Some(Function::Hardcoded {
+//             id: 31,
+//             momentary: true,
+//         }),
+//         Some(Function::Hardcoded {
+//             id: 30,
+//             momentary: true,
+//         }),
+//         Some(Function::Hardcoded {
+//             id: 6,
+//             momentary: true,
+//         }),
+//         Some(Function::EmergencyStop), // Emergency
+//         Some(Function::Hardcoded {
+//             id: 2,
+//             momentary: true,
+//         }), // Horn
+//     ],
+// }));
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     info!("Hello World!");
@@ -460,39 +545,75 @@ async fn main(spawner: Spawner) {
     });
     let mut connected_light = Output::new(p.PIN_15, Level::Low);
 
-    // // USB shit
+    // USB shit
 
-    // // Create the driver, from the HAL.
-    // let driver = Driver::new(p.USB, Irqs);
+    // Create the driver, from the HAL.
+    let driver = Driver::new(p.USB, Irqs);
 
-    // // Create embassy-usb Config
-    // let config = {
-    //     let mut config = embassy_usb::Config::new(0x0424, 0x274e);
-    //     config.manufacturer = Some("Embassy");
-    //     config.product = Some("USB-serial example");
-    //     config.serial_number = Some("12345678");
-    //     config.max_power = 100;
-    //     config.max_packet_size_0 = 64;
-    //     config
-    // };
+    // Create embassy-usb Config
+    let usb_config = {
+        let mut config = embassy_usb::Config::new(0x1209, 0x0001);
+        config.manufacturer = Some("Embassy");
+        config.product = Some("USB-serial example");
+        config.serial_number = Some("12345678");
+        config.max_power = 100;
+        config.max_packet_size_0 = 64;
+        config
+    };
 
-    // // Create embassy-usb DeviceBuilder using the driver and config.
-    // // It needs some buffers for building the descriptors.
-    // let mut builder = {
-    //     static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    //     static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    //     static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+    static WEBUSB_STATE: StaticCell<State> = StaticCell::new();
+    let state = WEBUSB_STATE.init(State::new());
+    static WEBUSB_CONFIG: StaticCell<WebUsbConfig> = StaticCell::new();
+    let webusb_config = WEBUSB_CONFIG.init(WebUsbConfig {
+        max_packet_size: 64,
+        vendor_code: 1,
+        // If defined, shows a landing page which the device manufacturer would like the user to visit in order to control their device. Suggest the user to navigate to this URL when the device is connected.
+        landing_url: Some(Url::new("https://foamer.mstrodl.com")),
+    });
 
-    //     let builder = embassy_usb::Builder::new(
-    //         driver,
-    //         config,
-    //         CONFIG_DESCRIPTOR.init([0; 256]),
-    //         BOS_DESCRIPTOR.init([0; 256]),
-    //         &mut [], // no msos descriptors
-    //         CONTROL_BUF.init([0; 64]),
-    //     );
-    //     builder
-    // };
+    // Create embassy-usb DeviceBuilder using the driver and config.
+    // It needs some buffers for building the descriptors.
+    let mut builder = {
+        // This is a randomly generated GUID to allow clients on Windows to find our device
+        const DEVICE_INTERFACE_GUIDS: &[&str] = &["{0DFAA759-5E78-4411-9463-A3158433C0CD}"];
+
+        static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
+        static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
+        static MSOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
+        static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+
+        let mut builder = embassy_usb::Builder::new(
+            driver,
+            usb_config,
+            CONFIG_DESCRIPTOR.init([0; _]),
+            BOS_DESCRIPTOR.init([0; _]),
+            MSOS_DESCRIPTOR.init([0; _]),
+            CONTROL_BUF.init([0; _]),
+        );
+
+        builder.msos_descriptor(windows_version::WIN8_1, 0);
+        builder.msos_feature(msos::CompatibleIdFeatureDescriptor::new("WINUSB", ""));
+        builder.msos_feature(msos::RegistryPropertyFeatureDescriptor::new(
+            "DeviceInterfaceGUIDs",
+            msos::PropertyData::RegMultiSz(DEVICE_INTERFACE_GUIDS),
+        ));
+
+        WebUsb::configure(&mut builder, state, webusb_config);
+
+        builder
+    };
+
+    let profile_usb_endpoints = ProfileUsbEndpoints::new(webusb_config, &mut builder);
+    // // Add a vendor-specific function (class 0xFF), and corresponding interface,
+    // // that uses our custom handler.
+    // {
+    //     let mut function = builder.function(0xFF, 0, 0);
+    //     let mut interface = function.interface();
+    //     let _alt = interface.alt_setting(0xFF, 0, 0, None);
+    //     handler.if_num = interface.interface_number();
+    // }
+    // let handler = ProfileUsbHandler::new(
+    // builder.handler(&mut handler);
 
     // // Create classes on the builder.
     // let serial = {
@@ -501,8 +622,8 @@ async fn main(spawner: Spawner) {
     //     CdcAcmClass::new(&mut builder, state, 64)
     // };
 
-    // // Build the builder.
-    // let usb = builder.build();
+    // Build the builder.
+    let usb = builder.build();
 
     // // static SERIAL: StaticCell<CdcAcmClass<Driver<'static, USB>>> = StaticCell::new();
     // // let serial = SERIAL.init(serial);
@@ -517,7 +638,7 @@ async fn main(spawner: Spawner) {
     // defmt_serial::defmt_serial(acm_serial);
 
     // Run the USB device.
-    // spawner.spawn(unwrap!(usb_task(usb)));
+    spawner.spawn(unwrap!(usb_task(usb)));
 
     let fw = cyw43::aligned_bytes!("../cyw43-firmware/43439A0.bin");
     let clm = cyw43::aligned_bytes!("../cyw43-firmware/43439A0_clm.bin");
@@ -587,7 +708,7 @@ async fn main(spawner: Spawner) {
         .set_power_management(cyw43::PowerManagementMode::PowerSave)
         .await;
 
-    let config = Config::dhcpv4(Default::default());
+    let net_config = NetConfig::dhcpv4(Default::default());
     // Use static IP configuration instead of DHCP
     //let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
     //    address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 69, 2), 24),
@@ -602,16 +723,51 @@ async fn main(spawner: Spawner) {
     static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
     let (stack, runner) = embassy_net::new(
         net_device,
-        config,
+        net_config,
         RESOURCES.init(StackResources::new()),
         seed,
     );
 
     spawner.spawn(defmt::unwrap!(net_task(runner)));
 
+    static CONFIG: StaticCell<Mutex<RefCell<Config>>> = StaticCell::new();
+    let mut flash =
+        embassy_rp::flash::Flash::<_, flash::Blocking, { flash::FLASH_SIZE }>::new_blocking(
+            p.FLASH,
+        );
+    let config = CONFIG.init(Mutex::new(RefCell::new(
+        match flash::read_config(&mut flash) {
+            Ok(config) => config,
+            Err(err) => {
+                defmt::error!("Invalid config! Giving a default instead... {}", err);
+                Default::default()
+            }
+        },
+    )));
+    let wifi_config = config.get_mut().get_mut().wifi_config.clone();
+
+    static FLASH_CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, FlashCommand, 1>> =
+        StaticCell::new();
+    let flash_channel = FLASH_CHANNEL.init(Channel::new());
+    spawner.spawn(defmt::unwrap!(crate::flash::flash_task(
+        flash,
+        config,
+        flash_channel.receiver()
+    )));
+    spawner.spawn(defmt::unwrap!(crate::profile_usb::usb_task(
+        profile_usb_endpoints,
+        config,
+        flash_channel.sender(),
+    )));
+
     while let Err(err) = control
-        .join("RIT-WiFi", JoinOptions::new_open())
-        // .join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes()))
+        .join(
+            &wifi_config.ssid,
+            match wifi_config.password {
+                Some(ref password) => JoinOptions::new(password.as_bytes()),
+                None => JoinOptions::new_open(),
+            },
+        )
         .await
     {
         info!("join failed with status={}", err);
@@ -641,83 +797,6 @@ async fn main(spawner: Spawner) {
     let roster_buffer = ROSTER_BUFFER.init(Default::default());
     static LOCOMOTIVE_BUFFER: StaticCell<heapless::String<4096>> = StaticCell::new();
     let locomotive_buffer = LOCOMOTIVE_BUFFER.init(Default::default());
-    static PROFILES: StaticCell<[Profile; 10]> = StaticCell::new();
-    let profiles = PROFILES.init(core::array::from_fn(|index| Profile {
-        address: [
-            0x7430, 0x8104, 0x2303, 0x2304, //
-            0x7420, 0x3600, 0x1957, 0x8014, //
-            0x7420, 0x8104,
-        ]
-        .map(Address::Long)[index],
-        functions: [
-            // User 1-4
-            Some(Function::Hardcoded {
-                id: 8,
-                momentary: false,
-            }),
-            None,
-            None,
-            None,
-            Some(Function::Hardcoded {
-                id: 1,
-                momentary: true,
-            }), // Bell
-            Some(Function::Hardcoded {
-                id: 7,
-                momentary: false,
-            }), // Dynamics
-            // Tri-Switches
-            // Ditch lights (Up, Middle, Down)
-            Some(Function::Hardcoded {
-                id: 4,
-                momentary: true,
-            }),
-            None,
-            Some(Function::Hardcoded {
-                id: 12,
-                momentary: true,
-            }),
-            // Headlight rear (Up, Middle, Down)
-            Some(Function::Hardcoded {
-                id: 10,
-                momentary: true,
-            }),
-            None,
-            Some(Function::Hardcoded {
-                id: 11,
-                momentary: true,
-            }),
-            // Headlight front (Up, Middle, Down)
-            Some(Function::Hardcoded {
-                id: 0,
-                momentary: true,
-            }),
-            None,
-            Some(Function::Hardcoded {
-                id: 3,
-                momentary: true,
-            }),
-            // Brake
-            None,
-            Some(Function::Hardcoded {
-                id: 31,
-                momentary: true,
-            }),
-            Some(Function::Hardcoded {
-                id: 30,
-                momentary: true,
-            }),
-            Some(Function::Hardcoded {
-                id: 6,
-                momentary: true,
-            }),
-            Some(Function::EmergencyStop), // Emergency
-            Some(Function::Hardcoded {
-                id: 2,
-                momentary: true,
-            }), // Horn
-        ],
-    }));
 
     static HEARTBEAT_INTERVAL: Signal<CriticalSectionRawMutex, Duration> = Signal::new();
     spawner.spawn(defmt::unwrap!(withrottle_heartbeat(&HEARTBEAT_INTERVAL)));
@@ -764,7 +843,10 @@ async fn main(spawner: Spawner) {
         let mut withrottle_client = match WiThrottleClient::new(
             withrottle_socket,
             id,
-            &profiles[0],
+            ProfileWrapper {
+                mutex: config,
+                profile_index: 0,
+            },
             line_buffer,
             roster_buffer,
             locomotive_buffer,
@@ -795,7 +877,7 @@ async fn main(spawner: Spawner) {
                             defmt::info!("Set the state of function {} to {}", function_id, state);
                         }
                         WiThrottleRequest::SetProfile(profile) => {
-                            withrottle_client.set_profile(&profiles[profile]).await?;
+                            withrottle_client.set_profile(profile).await?;
                             defmt::info!("Set profile to #{}", profile);
                         }
                         WiThrottleRequest::SetReverser(direction) => {

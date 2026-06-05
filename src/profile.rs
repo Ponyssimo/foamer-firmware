@@ -1,5 +1,6 @@
 use crate::BrakeState;
 use crate::triple_switch::TripleSwitchState;
+use const_default::ConstDefault;
 use defmt::Format;
 use heapless::String;
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,16 @@ use serde::{Deserialize, Serialize};
 pub enum Address {
     Short(u8),
     Long(u16),
+}
+
+impl Default for Address {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl ConstDefault for Address {
+    const DEFAULT: Self = Self::Long(0x4242);
 }
 
 // mod string_borsh {
@@ -35,17 +46,36 @@ pub enum Address {
 //     }
 // }
 
-#[derive(Format, Serialize, Deserialize)]
+#[derive(Clone, Format, Serialize, Deserialize)]
 pub enum Function {
     Label { label: String<32>, momentary: bool },
     Hardcoded { id: u8, momentary: bool },
     EmergencyStop,
 }
 
-#[derive(Format, Serialize, Deserialize)]
+#[derive(Clone, ConstDefault, Default, Format, Serialize, Deserialize)]
 pub struct Profile {
     pub address: Address,
     pub functions: [Option<Function>; PROFILE_FUNCTION_COUNT],
+}
+
+#[derive(Clone, Default, Format, Serialize, Deserialize)]
+pub struct WifiConfig {
+    pub ssid: String<32>,
+    pub password: Option<String<32>>,
+}
+
+impl ConstDefault for WifiConfig {
+    const DEFAULT: Self = Self {
+        ssid: String::new(),
+        password: None,
+    };
+}
+
+#[derive(Clone, ConstDefault, Default, Format, Serialize, Deserialize)]
+pub struct Config {
+    pub wifi_config: WifiConfig,
+    pub profiles: [Profile; 10],
 }
 
 pub const USER_BUTTONS: usize = 6;
