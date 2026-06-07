@@ -1,11 +1,16 @@
 #![no_std]
 
-use defmt::Format;
 use heapless::String;
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 
-#[derive(VariantArray, Format, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "defmt")]
+use defmt::Format;
+
+pub mod profile_usb_types;
+
+#[derive(VariantArray, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(Format))]
 #[repr(usize)]
 pub enum BrakeState {
     Released,
@@ -15,7 +20,8 @@ pub enum BrakeState {
     Emergency,
 }
 
-#[derive(Format, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(Format))]
 #[repr(usize)]
 pub enum TripleSwitchState {
     Up,
@@ -23,7 +29,8 @@ pub enum TripleSwitchState {
     Down,
 }
 
-#[derive(Serialize, Deserialize, Eq, Format, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Eq, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(Format))]
 pub enum Address {
     Short(u8),
     Long(u16),
@@ -60,26 +67,30 @@ impl Default for Address {
 //     }
 // }
 
-#[derive(Clone, Format, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "defmt", derive(Format))]
 pub enum Function {
     Label { label: String<32>, momentary: bool },
     Hardcoded { id: u8, momentary: bool },
     EmergencyStop,
 }
 
-#[derive(Clone, Default, Format, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "defmt", derive(Format))]
 pub struct Profile {
     pub address: Address,
     pub functions: [Option<Function>; PROFILE_FUNCTION_COUNT],
 }
 
-#[derive(Clone, Default, Format, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "defmt", derive(Format))]
 pub struct WifiConfig {
     pub ssid: String<32>,
     pub password: Option<String<32>>,
 }
 
-#[derive(Clone, Default, Format, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "defmt", derive(Format))]
 pub struct Config {
     pub wifi_config: WifiConfig,
     pub profiles: [Profile; 10],

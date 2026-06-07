@@ -57,7 +57,6 @@ use crate::withrottle::{ProfileWrapper, WiThrottleClient, WiThrottleError};
 mod buf_reader;
 mod flash;
 mod profile_usb;
-mod profile_usb_types;
 mod rotary_switch;
 mod triple_switch;
 mod withrottle;

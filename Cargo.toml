@@ -1,11 +1,10 @@
 [workspace]
-
-resolver = "3"
 members = [
-    "foamer-firmware"
-, "foamer-types"]
+    "foamer-configurator",
+    "foamer-firmware",
+    "foamer-types", "usb-test",
+]
+resolver = "3"
 
 [profile.release]
-# Enable generation of debug symbols even on release builds
-debug = true
-
+debug = 2

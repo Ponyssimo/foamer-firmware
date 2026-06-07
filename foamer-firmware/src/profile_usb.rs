@@ -15,7 +15,7 @@ use foamer_types::Config;
 use heapless::Vec;
 
 use crate::flash::FlashCommand;
-use crate::profile_usb_types::{InControlMessage, OutControlMessage};
+use foamer_types::profile_usb_types::{InControlMessage, OutControlMessage};
 
 pub struct ProfileUsbHandler<'d, D: Driver<'d>> {
     endpoints: ProfileUsbEndpoints<'d, D>,
@@ -85,6 +85,7 @@ impl<'d, D: Driver<'d>> ProfileUsbHandler<'d, D> {
                     self.consume_remote_config(length).await?;
                 }
                 OutControlMessage::ReadConfig => {
+                    defmt::info!("Reading config");
                     // Try 2kB buffer on the stack
                     // You surely will not regret 2kB buffer on the stack
                     let mut buf = [0u8; 2048];
@@ -97,9 +98,16 @@ impl<'d, D: Driver<'d>> ProfileUsbHandler<'d, D> {
                         },
                         &mut buf,
                     )?;
-                    for chunk in buf.chunks(self.endpoints.max_packet_size.into()) {
-                        self.endpoints.write_endpoint.write(chunk).await?;
-                    }
+                    defmt::info!("Write read config: {}", buf);
+                    self.endpoints.write_endpoint.write(&buf).await?;
+                    defmt::info!("Write chunks!");
+                    self.endpoints
+                        .write_endpoint
+                        .write_transfer(chunk, false)
+                        .await?;
+                    // for chunk in buf.chunks(self.endpoints.max_packet_size.into()) {
+                    //     defmt::info!("Writing chunk: {}", chunk);
+                    // }
                 }
             }
         }
