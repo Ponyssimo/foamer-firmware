@@ -4,18 +4,13 @@ use embassy_rp::{
     gpio::{Flex, Level, Pin, Pull},
 };
 use embassy_time::{Duration, Timer};
+use foamer_types::TripleSwitchState;
 
 #[derive(Format)]
 pub struct TripleSwitch<'a> {
     pin: Flex<'a>,
 }
-#[derive(Format, Clone, Copy, PartialEq, Eq)]
-#[repr(usize)]
-pub enum TripleSwitchState {
-    Up,
-    Middle,
-    Down,
-}
+
 impl<'a> TripleSwitch<'a> {
     pub fn new(pin: Peri<'a, impl Pin>) -> Self {
         Self {

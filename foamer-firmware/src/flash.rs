@@ -1,4 +1,3 @@
-use crate::profile::Config;
 use core::cell::RefCell;
 use critical_section::Mutex;
 use defmt::Format;
@@ -8,6 +7,7 @@ use embassy_rp::peripherals::FLASH;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
 use embedded_io::ErrorKind;
+use foamer_types::Config;
 use heapless::Vec;
 use static_cell::StaticCell;
 

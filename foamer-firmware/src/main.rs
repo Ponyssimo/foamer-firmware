@@ -8,7 +8,7 @@ use core::cell::RefCell;
 use core::net::{Ipv4Addr, SocketAddr};
 
 use crate::rotary_switch::RotarySwitch;
-use crate::triple_switch::{TripleSwitch, TripleSwitchState};
+use crate::triple_switch::TripleSwitch;
 use critical_section::Mutex;
 use cyw43::JoinOptions;
 use cyw43_pio::{DEFAULT_CLOCK_DIVIDER, PioSpi};
@@ -42,21 +42,20 @@ use embassy_usb::{
     msos::{self, windows_version},
 };
 use embedded_nal_async::TcpConnect;
+use foamer_types::{
+    BRAKE_START_INDEX, BrakeState, Config, HORN_INDEX, TRIPLE_SWITCH_FUNCTION_COUNT,
+    TRIPLE_SWITCH_START_INDEX, TRIPLE_SWITCHES, TripleSwitchState, USER_BUTTONS,
+};
 use panic_probe as _;
 use static_cell::StaticCell;
 use strum::VariantArray;
 
 use crate::flash::FlashCommand;
-use crate::profile::{
-    BRAKE_START_INDEX, Config, HORN_INDEX, TRIPLE_SWITCH_FUNCTION_COUNT, TRIPLE_SWITCH_START_INDEX,
-    TRIPLE_SWITCHES, USER_BUTTONS,
-};
 use crate::profile_usb::ProfileUsbEndpoints;
 use crate::withrottle::{ProfileWrapper, WiThrottleClient, WiThrottleError};
 
 mod buf_reader;
 mod flash;
-mod profile;
 mod profile_usb;
 mod profile_usb_types;
 mod rotary_switch;
@@ -243,16 +242,6 @@ async fn read_reverser_encoder(mut encoder: PioEncoder<'static, PIO0, 2>) {
         };
         submit_request(WiThrottleRequest::SetReverser(position)).await
     }
-}
-
-#[derive(VariantArray, Format, Clone, Copy, PartialEq, Eq)]
-#[repr(usize)]
-pub enum BrakeState {
-    Released,
-    Brake1,
-    Brake2,
-    Brake3,
-    Emergency,
 }
 
 trait OptionArrayExt<const N: usize> {

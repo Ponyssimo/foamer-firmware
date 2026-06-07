@@ -11,10 +11,10 @@ use embassy_usb::{
     driver::Driver,
     driver::{Endpoint, EndpointError, EndpointIn, EndpointOut},
 };
+use foamer_types::Config;
 use heapless::Vec;
 
 use crate::flash::FlashCommand;
-use crate::profile::Config;
 use crate::profile_usb_types::{InControlMessage, OutControlMessage};
 
 pub struct ProfileUsbHandler<'d, D: Driver<'d>> {

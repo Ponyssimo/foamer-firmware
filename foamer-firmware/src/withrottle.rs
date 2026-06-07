@@ -1,5 +1,4 @@
 use crate::buf_reader::{BufReader, BufReaderError, ReadLineError};
-use crate::profile::{Address, Config, Function, PROFILE_FUNCTION_COUNT, Profile};
 use crate::{CancellationSignal, ReverserPosition};
 use core::cell::RefCell;
 use critical_section::Mutex;
@@ -8,8 +7,12 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
 use embedded_io_async::{Read, ReadExactError, Write};
+use foamer_types::{Address, Config, Function, PROFILE_FUNCTION_COUNT, Profile};
 
-impl Address {
+trait AddressExt {
+    fn to_withrottle(self) -> heapless::String<5>;
+}
+impl AddressExt for Address {
     fn to_withrottle(self) -> heapless::String<5> {
         match self {
             Self::Long(long) => {
