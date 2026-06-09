@@ -310,7 +310,6 @@ async fn read_potentiometers(
         let brake = defmt::unwrap!(adc.read(&mut brake).await, "Brake conversion error");
         let horn = defmt::unwrap!(adc.read(&mut horn).await, "Horn conversion error");
         pot_drv.set_low();
-        defmt::info!("Horn value is {}", horn);
 
         match horn_released {
             Some(horn_released) => {
@@ -716,13 +715,12 @@ async fn main(spawner: Spawner) {
         seed,
     );
 
-    spawner.spawn(defmt::unwrap!(net_task(runner)));
-
     static CONFIG: StaticCell<Mutex<RefCell<Config>>> = StaticCell::new();
     let mut flash =
         embassy_rp::flash::Flash::<_, flash::Blocking, { flash::FLASH_SIZE }>::new_blocking(
             p.FLASH,
         );
+    defmt::info!("Going to grab the config!");
     let config = CONFIG.init(Mutex::new(RefCell::new(
         match flash::read_config(&mut flash) {
             Ok(config) => config,
@@ -761,6 +759,8 @@ async fn main(spawner: Spawner) {
         info!("join failed with status={}", err);
         Timer::after(Duration::from_secs(5)).await;
     }
+
+    spawner.spawn(defmt::unwrap!(net_task(runner)));
 
     info!("waiting for link...");
     stack.wait_link_up().await;

@@ -89,11 +89,95 @@ pub struct WifiConfig {
     pub password: Option<String<32>>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "defmt", derive(Format))]
 pub struct Config {
     pub wifi_config: WifiConfig,
     pub profiles: [Profile; 10],
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            wifi_config: Default::default(),
+            profiles: core::array::from_fn(|index| Profile {
+                address: [
+                    0x7430, 0x8104, 0x2303, 0x2304, //
+                    0x7420, 0x3600, 0x1957, 0x8014, //
+                    0x7420, 0x8104,
+                ]
+                .map(Address::Long)[index],
+                functions: [
+                    // User 1-4
+                    Some(Function::Hardcoded {
+                        id: 8,
+                        momentary: false,
+                    }),
+                    None,
+                    None,
+                    None,
+                    Some(Function::Hardcoded {
+                        id: 1,
+                        momentary: true,
+                    }), // Bell
+                    Some(Function::Hardcoded {
+                        id: 7,
+                        momentary: false,
+                    }), // Dynamics
+                    // Tri-Switches
+                    // Ditch lights (Up, Middle, Down)
+                    Some(Function::Hardcoded {
+                        id: 4,
+                        momentary: true,
+                    }),
+                    None,
+                    Some(Function::Hardcoded {
+                        id: 12,
+                        momentary: true,
+                    }),
+                    // Headlight rear (Up, Middle, Down)
+                    Some(Function::Hardcoded {
+                        id: 10,
+                        momentary: true,
+                    }),
+                    None,
+                    Some(Function::Hardcoded {
+                        id: 11,
+                        momentary: true,
+                    }),
+                    // Headlight front (Up, Middle, Down)
+                    Some(Function::Hardcoded {
+                        id: 0,
+                        momentary: true,
+                    }),
+                    None,
+                    Some(Function::Hardcoded {
+                        id: 3,
+                        momentary: true,
+                    }),
+                    // Brake
+                    None,
+                    Some(Function::Hardcoded {
+                        id: 31,
+                        momentary: true,
+                    }),
+                    Some(Function::Hardcoded {
+                        id: 30,
+                        momentary: true,
+                    }),
+                    Some(Function::Hardcoded {
+                        id: 6,
+                        momentary: true,
+                    }),
+                    Some(Function::EmergencyStop), // Emergency
+                    Some(Function::Hardcoded {
+                        id: 2,
+                        momentary: true,
+                    }), // Horn
+                ],
+            }),
+        }
+    }
 }
 
 pub const USER_BUTTONS: usize = 6;

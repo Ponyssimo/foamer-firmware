@@ -148,6 +148,8 @@ pub async fn flash_task(
                             continue;
                         }
                     };
+                    defmt::info!("Config is {}", new_config);
+
                     // Commit!
                     critical_section::with(|cs| {
                         let mut config = config.borrow_ref_mut(cs);

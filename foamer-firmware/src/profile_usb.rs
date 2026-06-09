@@ -88,10 +88,11 @@ impl<'d, D: Driver<'d>> ProfileUsbHandler<'d, D> {
                     defmt::info!("Reading config");
                     // Try 2kB buffer on the stack
                     // You surely will not regret 2kB buffer on the stack
-                    let mut buf = [0u8; 2048];
+                    let mut config_buf = [0u8; 2048];
                     let config_buf = critical_section::with(|cs| {
-                        postcard::to_slice(&*self.config.borrow_ref(cs), &mut buf)
+                        postcard::to_slice(&*self.config.borrow_ref(cs), &mut config_buf)
                     })?;
+                    defmt::info!("Config buf is {} bytes", config_buf.len());
                     postcard::to_slice(
                         &InControlMessage::ReadConfig {
                             length: config_buf.len(),
@@ -103,7 +104,7 @@ impl<'d, D: Driver<'d>> ProfileUsbHandler<'d, D> {
                     defmt::info!("Write chunks!");
                     self.endpoints
                         .write_endpoint
-                        .write_transfer(chunk, false)
+                        .write_transfer(config_buf, false)
                         .await?;
                     // for chunk in buf.chunks(self.endpoints.max_packet_size.into()) {
                     //     defmt::info!("Writing chunk: {}", chunk);
