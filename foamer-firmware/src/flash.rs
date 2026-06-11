@@ -6,6 +6,7 @@ use embassy_rp::flash::{Error, Flash, Instance, Mode};
 use embassy_rp::peripherals::FLASH;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
+use embassy_time::{Duration, Instant, TimeoutError, Timer};
 use embedded_io::ErrorKind;
 use foamer_types::Config;
 use heapless::Vec;
@@ -130,16 +131,27 @@ pub async fn flash_task(
     loop {
         match flash_channel.receive().await {
             FlashCommand::Reset { length } => {
+                defmt::info!("Resetting config buffer for length {}", length);
                 remote_config_buffer.clear();
                 config_length = length;
             }
             FlashCommand::WriteChunk { data } => {
+                defmt::info!("Writing chunk of length {}: {}", data.len(), data);
                 defmt::unwrap!(
                     remote_config_buffer.extend_from_slice(&data),
                     "Missing a reset somewhere in here? Someone tried to send really big data to us..."
                 );
                 if remote_config_buffer.len() >= config_length {
-                    defmt::info!("Finished receiving config! Let's decode and commit it!");
+                    defmt::info!(
+                        "Hit the right length! (Wanted {}, got {})",
+                        config_length,
+                        remote_config_buffer.len()
+                    );
+                    defmt::info!(
+                        "Finished receiving config! Let's decode and commit it! {}",
+                        remote_config_buffer
+                    );
+
                     let new_config: Config = match postcard::from_bytes(remote_config_buffer) {
                         Ok(new_config) => new_config,
                         Err(err) => {

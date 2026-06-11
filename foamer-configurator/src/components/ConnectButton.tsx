@@ -57,6 +57,8 @@ async function saveConfig(device: USBDevice, config: Config) {
 
   const packetSize = getPacketSize(device);
   const configBuffer = wasm.encode_config(JSON.stringify(config));
+  const configTmp = wasm.decode_config(configBuffer);
+  console.log("Got config buffer", configBuffer, configTmp);
   await device.transferOut(ENDPOINT_NUMBER, wasm.create_write_request(configBuffer.length));
 
   for (let offset = 0; offset < configBuffer.length; offset += packetSize) {

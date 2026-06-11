@@ -79,9 +79,15 @@ impl<'d, D: Driver<'d>> ProfileUsbHandler<'d, D> {
         let mut buf = [0u8; 64];
         loop {
             let message = self.read(&mut buf).await?;
+            defmt::info!("Received buffer {}", message);
             let control_message: OutControlMessage = postcard::from_bytes(message)?;
+            defmt::info!("Received buffer was message: {}", control_message);
             match control_message {
                 OutControlMessage::WriteConfig { length } => {
+                    defmt::info!(
+                        "Writing a config, by reading {} bytes from browser!",
+                        length
+                    );
                     self.consume_remote_config(length).await?;
                 }
                 OutControlMessage::ReadConfig => {
@@ -126,6 +132,7 @@ impl<'d, D: Driver<'d>> ProfileUsbHandler<'d, D> {
         while cumulative_length < remote_config_length {
             let chunk = self.read(&mut buf).await?;
             let length = chunk.len();
+            defmt::info!("Read another chunk of lenght {}: {}", length, chunk);
             cumulative_length += length;
             self.flash_channel_tx
                 .send(FlashCommand::WriteChunk {
