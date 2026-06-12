@@ -102,7 +102,7 @@ export default function Header() {
                     </a>
 
                     <ThemeToggle />
-                  <FileButton />
+                    <FileButton />
                     <ConnectButton />
                 </div>
             </nav>

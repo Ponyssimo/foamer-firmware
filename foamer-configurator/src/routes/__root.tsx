@@ -1,10 +1,11 @@
-import {useEffect, useRef, useState} from "react";
-import {configStore} from "../stores/configStore";
+import { useEffect, useRef, useState } from "react";
+import { configStore } from "../stores/configStore";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import { createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import Footer from "../components/Footer";
 import Header from "../components/Header";
+import type {Config} from "../stores/configStore";
 
 import appCss from "../styles.css?url";
 
@@ -38,7 +39,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         if (!import.meta.env.SSR) {
             const localConfig = localStorage.getItem("config");
-            let initialConfig;
+            let initialConfig: Config | undefined;
             if (localConfig) {
                 try {
                     initialConfig = JSON.parse(localConfig);
@@ -54,7 +55,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                 console.log("Confeeeg", config);
                 localStorage.setItem("config", JSON.stringify(config));
             });
-            return () => {subscription.unsubscribe()};
+            return () => {
+                subscription.unsubscribe();
+            };
         }
     }, []);
 
