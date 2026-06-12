@@ -2,7 +2,7 @@
 members = [
     "foamer-configurator",
     "foamer-firmware",
-    "foamer-types", "usb-test",
+    "foamer-types",
 ]
 resolver = "3"
 
