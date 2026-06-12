@@ -56,7 +56,7 @@ export type Profile = {
 };
 
 export type Config = {
-  wifi: {
+  wifi_config: {
     ssid: string;
     password: string | null;
   };
@@ -91,10 +91,23 @@ const DEFAULT_PROFILE: Profile = {
 };
 
 // TODO: Mary save the config in local storage and read back!!
-export const configStore = createStore({
-  profiles: new Array(10).fill(DEFAULT_PROFILE),
+export const DEFAULT_CONFIG: Config = {
+  profiles: new Array(10).fill(DEFAULT_PROFILE) as [
+    Profile,
+    Profile,
+    Profile,
+    Profile,
+    Profile,
+    Profile,
+    Profile,
+    Profile,
+    Profile,
+    Profile,
+  ],
   wifi_config: {
     ssid: "RIT-WiFi",
     password: null,
-  },
-} as Config);
+  } as const,
+};
+
+export const configStore = createStore(structuredClone(DEFAULT_CONFIG));

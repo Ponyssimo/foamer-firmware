@@ -950,7 +950,6 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-hal-bus",
- "embedded-io 0.6.1",
  "embedded-io-async 0.7.0",
  "embedded-nal-async",
  "foamer-types",
@@ -960,7 +959,7 @@ dependencies = [
  "postcard",
  "rand",
  "serde",
- "serde-json-core",
+ "serde-json-core 0.6.0",
  "static_cell",
  "strum",
 ]
@@ -1147,7 +1146,9 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
 dependencies = [
+ "defmt 0.3.100",
  "hash32 0.3.1",
+ "serde",
  "stable_deref_trait",
 ]
 
@@ -1783,6 +1784,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-json-core"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b81787e655bd59cecadc91f7b6b8651330b2be6c33246039a65e5cd6f4e0828"
+dependencies = [
+ "defmt 0.3.100",
+ "heapless 0.8.0",
+ "ryu",
+ "serde",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2158,7 +2171,7 @@ dependencies = [
  "postcard",
  "rand",
  "serde",
- "serde-json-core",
+ "serde-json-core 0.5.1",
  "static_cell",
  "strum",
 ]

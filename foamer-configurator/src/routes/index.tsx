@@ -20,6 +20,7 @@ function App() {
     configStore,
     (config) => config.profiles[Number(profileId)],
   );
+  const wifiConfig = useSelector(configStore, (config) => config.wifi_config);
 
   return (
     <main className="page-wrap px-4 pb-8 pt-14">
@@ -32,6 +33,7 @@ function App() {
           Profile
           <select
             name="profile"
+            id="profile"
             value={profileId}
             className="my-2 demo-select"
             onChange={(event) => {
@@ -90,20 +92,51 @@ function App() {
           profileId={profileId}
           functions={BRAKE_LABELS}
         />
+      </section>
 
-        <ul className="m-0 list-disc space-y-2 pl-5 text-sm text-[var(--sea-ink-soft)]">
-          <li>
-            Edit <code>src/routes/index.tsx</code> to customize the home page.
-          </li>
-          <li>
-            Update <code>src/components/Header.tsx</code> and{" "}
-            <code>src/components/Footer.tsx</code> for brand links.
-          </li>
-          <li>
-            Add routes in <code>src/routes</code> and tweak visual tokens in{" "}
-            <code>src/styles.css</code>.
-          </li>
-        </ul>
+      <section className="island-shell mt-8 rounded-2xl p-6">
+        <p className="island-kicker mb-2">WiFi Configuration</p>
+        <label
+          htmlFor="ssid"
+          className="block text-sm font-semibold text-[var(--sea-ink)]"
+        >
+          WiFi SSID
+          <input
+            name="ssid"
+            id="ssid"
+            type="text"
+            className="my-2 demo-input"
+            value={wifiConfig.ssid}
+            onChange={(event) => {
+              configStore.setState((config) => {
+                config = structuredClone(config);
+                config.wifi_config.ssid = event.target.value;
+                return config;
+              });
+            }}
+          />
+        </label>
+
+        <label
+          htmlFor="ssid"
+          className="block text-sm font-semibold text-[var(--sea-ink)]"
+        >
+          WiFi Password
+          <input
+            name="ssid"
+            id="ssid"
+            type="password"
+            className="my-2 demo-input"
+            value={wifiConfig.password ?? ""}
+            onChange={(event) => {
+              configStore.setState((config) => {
+                config = structuredClone(config);
+                config.wifi_config.password = event.target.value || null;
+                return config;
+              });
+            }}
+          />
+        </label>
       </section>
     </main>
   );

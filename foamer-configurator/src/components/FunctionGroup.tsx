@@ -108,7 +108,6 @@ function FunctionSwitch({
     });
   };
 
-  // console.log("Type", getFunctionType(func));
   const id = `function-${index}`;
   return (
     <section className="island-shell mt-8 rounded-2xl p-6">
@@ -121,6 +120,7 @@ function FunctionSwitch({
           {typeLabel}, activate:{" "}
           <select
             name={id}
+            id={id}
             value={getFunctionType(func) ?? "null"}
             className="my-2 demo-select"
             onChange={(event) => {
@@ -148,6 +148,7 @@ function FunctionSwitch({
             <input
               type="number"
               name={`${id}-hardcoded`}
+              id={`${id}-hardcoded`}
               value={func.Hardcoded.id}
               className="my-2 demo-input"
               min={0}
@@ -171,6 +172,7 @@ function FunctionSwitch({
             <input
               type="text"
               name={`${id}-label`}
+              id={`${id}-label`}
               value={func.Label.label}
               className="my-2 demo-input"
               onChange={(event) => {

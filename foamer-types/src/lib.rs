@@ -67,7 +67,7 @@ impl Default for Address {
 //     }
 // }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "defmt", derive(Format))]
 pub enum Function {
     Label { label: String<32>, momentary: bool },
@@ -75,21 +75,21 @@ pub enum Function {
     EmergencyStop,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "defmt", derive(Format))]
 pub struct Profile {
     pub address: Address,
     pub functions: [Option<Function>; PROFILE_FUNCTION_COUNT],
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "defmt", derive(Format))]
 pub struct WifiConfig {
     pub ssid: String<32>,
     pub password: Option<String<32>>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "defmt", derive(Format))]
 pub struct Config {
     pub wifi_config: WifiConfig,

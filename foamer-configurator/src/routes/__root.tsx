@@ -1,3 +1,5 @@
+import {useEffect, useRef, useState} from "react";
+import {configStore} from "../stores/configStore";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import { createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
@@ -33,6 +35,29 @@ export const Route = createRootRoute({
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+    useEffect(() => {
+        if (!import.meta.env.SSR) {
+            const localConfig = localStorage.getItem("config");
+            let initialConfig;
+            if (localConfig) {
+                try {
+                    initialConfig = JSON.parse(localConfig);
+                } catch (err) {
+                    console.error("Failed to parse saved config", err);
+                }
+            }
+            if (initialConfig) {
+                configStore.setState((_) => initialConfig);
+            }
+
+            const subscription = configStore.subscribe((config) => {
+                console.log("Confeeeg", config);
+                localStorage.setItem("config", JSON.stringify(config));
+            });
+            return () => {subscription.unsubscribe()};
+        }
+    }, []);
+
     return (
         <html lang="en" suppressHydrationWarning>
             <head>

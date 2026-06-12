@@ -59,6 +59,8 @@ async function saveConfig(device: USBDevice, config: Config) {
   const configBuffer = wasm.encode_config(JSON.stringify(config));
   const configTmp = wasm.decode_config(configBuffer);
   console.log("Got config buffer", configBuffer, configTmp);
+  // const textEncoder = new TextEncoder();
+  // const configBuffer = textEncoder.encode(JSON.stringify(config));
   await device.transferOut(ENDPOINT_NUMBER, wasm.create_write_request(configBuffer.length));
 
   for (let offset = 0; offset < configBuffer.length; offset += packetSize) {
@@ -97,9 +99,10 @@ export default function ConnectButton() {
                 {device ? (
                     <>
                         <button
+                          className="block cursor-pointer"
                             type="button"
                             onClick={() => {
-                                device.close().then(() => {
+                              device.close().catch(err => {console.warn("Failed to disconnect", err);}).then(() => {
                                     deviceStore.setState((_state) => null);
                                 });
                             }}
@@ -107,6 +110,7 @@ export default function ConnectButton() {
                             Disconnect {device?.productName}
                         </button>
                         <button
+                          className="block cursor-pointer"
                             type="button"
                             onClick={() => {
                                 console.log("Loading config from", device);
@@ -118,14 +122,17 @@ export default function ConnectButton() {
                         >
                             Load config from device
                         </button>
-                      <button type="button" onClick={() => {saveConfig(device, configStore.get())}}>
+                      <button
+
+                          className="block"
+                        type="button" onClick={() => {saveConfig(device, configStore.get())}}>
                             Save config to device
                         </button>
                     </>
                 ) : (
                     <button
+                        className="block cursor-pointer"
                         type="button"
-                        className="cursor-pointer"
                         onClick={() => {
                             navigator.usb
                                 .requestDevice({

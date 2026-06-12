@@ -11,10 +11,12 @@ const config = defineConfig({
     resolve: { tsconfigPaths: true },
     plugins: [
         devtools(),
-        cloudflare({ viteEnvironment: { name: "ssr" } }),
+        // cloudflare({ viteEnvironment: { name: "ssr" } }),
         wasm(),
         tailwindcss(),
-        tanstackStart(),
+        tanstackStart({
+            spa: { enabled: true },
+        }),
         viteReact(),
         babel({ presets: [reactCompilerPreset()] }),
     ],

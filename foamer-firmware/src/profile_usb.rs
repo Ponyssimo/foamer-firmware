@@ -99,22 +99,19 @@ impl<'d, D: Driver<'d>> ProfileUsbHandler<'d, D> {
                         postcard::to_slice(&*self.config.borrow_ref(cs), &mut config_buf)
                     })?;
                     defmt::info!("Config buf is {} bytes", config_buf.len());
-                    postcard::to_slice(
+                    let buf = postcard::to_slice(
                         &InControlMessage::ReadConfig {
                             length: config_buf.len(),
                         },
                         &mut buf,
                     )?;
                     defmt::info!("Write read config: {}", buf);
-                    self.endpoints.write_endpoint.write(&buf).await?;
-                    defmt::info!("Write chunks!");
+                    self.endpoints.write_endpoint.write(buf).await?;
+                    defmt::info!("Write chunks! {}", config_buf);
                     self.endpoints
                         .write_endpoint
                         .write_transfer(config_buf, false)
                         .await?;
-                    // for chunk in buf.chunks(self.endpoints.max_packet_size.into()) {
-                    //     defmt::info!("Writing chunk: {}", chunk);
-                    // }
                 }
             }
         }
