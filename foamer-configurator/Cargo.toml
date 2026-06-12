@@ -30,9 +30,5 @@ wasm-bindgen-test = "0.3.34"
 # Tell `rustc` to optimize for small code size.
 opt-level = "s"
 
-[package.metadata.wasm-pack]
-wasm-opt = false
-
-
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
