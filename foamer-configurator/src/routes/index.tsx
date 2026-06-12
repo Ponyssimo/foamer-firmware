@@ -10,8 +10,8 @@ import {
 import { useSelector } from "@tanstack/react-store";
 import { AddressSelector } from "../components/AddressSelector";
 import { FunctionGroup } from "../components/FunctionGroup";
-import {ErrorBanner} from "../components/ErrorBanner";
-import {WiThrottleConfig} from "../components/WiThrottleConfig";
+import { ErrorBanner } from "../components/ErrorBanner";
+import { WiThrottleConfig } from "../components/WiThrottleConfig";
 //import {greet} from "../../pkg";
 
 export const Route = createFileRoute("/")({ component: App });
@@ -26,7 +26,7 @@ function App() {
 
     return (
         <main className="page-wrap px-4 pb-8 pt-14">
-          <ErrorBanner />
+            <ErrorBanner />
             <section className="island-shell mt-8 rounded-2xl p-6">
                 <p className="island-kicker mb-2">Profiles</p>
                 <label
@@ -147,7 +147,7 @@ function App() {
                     />
                 </label>
             </section>
-          <WiThrottleConfig />
+            <WiThrottleConfig />
         </main>
     );
 }

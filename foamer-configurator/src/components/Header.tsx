@@ -103,7 +103,7 @@ export default function Header() {
 
                     <ThemeToggle />
                     <FileButton />
-                    <ConnectButton />
+                    {"usb" in navigator && <ConnectButton />}
                 </div>
             </nav>
         </header>

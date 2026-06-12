@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { deviceStore } from "../stores/deviceStore";
 import { configStore } from "../stores/configStore";
-import {errorStore} from "../stores/errorStore";
-import {wasmPromise} from "../wasm";
+import { errorStore } from "../stores/errorStore";
+import { wasmPromise } from "../wasm";
 
 type InControlMessage = { ReadConfig: { length: number } };
 type OutControlMessage = { WriteConfig: { length: number } } | "ReadConfig";
@@ -56,13 +56,16 @@ async function saveConfig(device: USBDevice, config: Config) {
     const wasm = await wasmPromise;
 
     const packetSize = getPacketSize(device);
-  let configBuffer: Uint8Array;
-  try {
-    configBuffer = wasm.encode_config(JSON.stringify(config));
-  } catch(err: string) {
-    errorStore.setState((_) => err);
-    return;
-}
+    let configBuffer: Uint8Array;
+    try {
+        configBuffer = wasm.encode_config(JSON.stringify(config));
+    } catch (err) {
+        if (typeof err != "string") {
+            throw err;
+        }
+        errorStore.setState((_) => err);
+        return;
+    }
     const configTmp = wasm.decode_config(configBuffer);
     console.log("Got config buffer", configBuffer, configTmp);
     // const textEncoder = new TextEncoder();
@@ -83,7 +86,7 @@ async function saveConfig(device: USBDevice, config: Config) {
 }
 
 export default function ConnectButton() {
-  const error = useSelector(errorStore, (state) => state);
+    const error = useSelector(errorStore, (state) => state);
     const device = useSelector(deviceStore, (state) => state?.usbDevice);
     const label = device
         ? `Connected to ${device.productName}`
@@ -165,14 +168,16 @@ export default function ConnectButton() {
                             Load config from device
                         </button>
                         <button
-                          className={"block" + (error ? " text-red-600" : "")}
+                            className={"block" + (error ? " text-red-600" : "")}
                             type="button"
                             disabled={!!error}
                             onClick={() => {
                                 saveConfig(device, configStore.get());
                             }}
                         >
-                          {error ? "Bad config, save unavailable" : "Save config to device"}
+                            {error
+                                ? "Bad config, save unavailable"
+                                : "Save config to device"}
                         </button>
                     </>
                 ) : (

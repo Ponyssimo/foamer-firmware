@@ -55,9 +55,11 @@ export type Profile = {
     ];
 };
 
-export type WiThrottleDiscovery = {
-  Hardcoded: string;
-} | "Mdns";
+export type WiThrottleDiscovery =
+    | {
+          Hardcoded: string;
+      }
+    | "Mdns";
 
 export type Config = {
     wifi_config: {
@@ -111,11 +113,11 @@ export const DEFAULT_CONFIG: Config = {
         Profile,
         Profile,
     ],
-  withrottle_server: {
-  discovery: {
-    Hardcoded: "192.0.2.69:12090",
-  },
-  } as const,
+    withrottle_server: {
+        discovery: {
+            Hardcoded: "192.0.2.69:12090",
+        },
+    } as const,
     wifi_config: {
         ssid: "RIT-WiFi",
         password: null,
