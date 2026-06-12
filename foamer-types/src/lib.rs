@@ -70,7 +70,7 @@ impl Default for Address {
 #[derive(Eq, PartialEq, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "defmt", derive(Format))]
 pub enum Function {
-    Label { label: String<32>, momentary: bool },
+    Label { label: String<16>, momentary: bool },
     Hardcoded { id: u8, momentary: bool },
     EmergencyStop,
 }

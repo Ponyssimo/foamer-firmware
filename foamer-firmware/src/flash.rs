@@ -23,7 +23,6 @@ pub fn read_config<'d, T: Instance, M: Mode, const FLASH_SIZE: usize>(
     _flash: &mut Flash<'d, T, M, FLASH_SIZE>,
 ) -> Result<Config, postcard::Error> {
     // Safety: We hold the one and only Flash instance
-    defmt::info!("Here are a few bytes of the personalization sector {}", unsafe {&PERSONALIZATION_SECTOR[0..16]});
     postcard::from_bytes(unsafe { &PERSONALIZATION_SECTOR })
 }
 

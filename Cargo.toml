@@ -8,3 +8,7 @@ resolver = "3"
 
 [profile.release]
 debug = 2
+
+#[profile.dev]
+#opt-level = 1
+

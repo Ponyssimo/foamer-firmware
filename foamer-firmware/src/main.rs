@@ -426,6 +426,22 @@ async fn main(spawner: Spawner) {
     });
     let mut connected_light = Output::new(p.PIN_15, Level::Low);
 
+    let mut flash =
+        embassy_rp::flash::Flash::<_, flash::Blocking, { flash::FLASH_SIZE }>::new_blocking(
+            p.FLASH,
+    );
+    static CONFIG: StaticCell<Mutex<RefCell<Config>>> = StaticCell::new();
+    defmt::info!("Going to grab the config!");
+    let config = CONFIG.init(Mutex::new(RefCell::new(
+        match flash::read_config(&mut flash) {
+            Ok(config) => config,
+            Err(err) => {
+                defmt::error!("Invalid config! Giving a default instead... {}", err);
+                Default::default()
+            }
+        },
+    )));
+
     // Start wifi stuff:
 
     let fw = cyw43::aligned_bytes!("../cyw43-firmware/43439A0.bin");
@@ -551,21 +567,6 @@ async fn main(spawner: Spawner) {
         seed,
     );
 
-    let mut flash =
-        embassy_rp::flash::Flash::<_, flash::Blocking, { flash::FLASH_SIZE }>::new_blocking(
-            p.FLASH,
-    );
-    static CONFIG: StaticCell<Mutex<RefCell<Config>>> = StaticCell::new();
-    defmt::info!("Going to grab the config!");
-    let config = CONFIG.init(Mutex::new(RefCell::new(
-        match flash::read_config(&mut flash) {
-            Ok(config) => config,
-            Err(err) => {
-                defmt::error!("Invalid config! Giving a default instead... {}", err);
-                Default::default()
-            }
-        },
-    )));
     let wifi_config = config.get_mut().get_mut().wifi_config.clone();
 
     static FLASH_CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, FlashCommand, 1>> =
