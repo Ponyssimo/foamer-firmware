@@ -10,6 +10,8 @@ use foamer_types::Config;
 use heapless::Vec;
 use static_cell::StaticCell;
 
+use crate::{WiThrottleRequest, submit_request_sync};
+
 const PAGE_SIZE: usize = 4096;
 // (2 MB... 512 pages of `PAGE_SIZE` each)
 pub const FLASH_SIZE: usize = 512 * PAGE_SIZE;
@@ -83,7 +85,13 @@ pub async fn flash_task(
                             );
                             return;
                         }
+                        // Sound because we hold the config lock right now,
+                        // they won't be able to get the old config
+                        if config.withrottle_server != new_config.withrottle_server {
+                            submit_request_sync(WiThrottleRequest::Disconnect);
+                        }
                         *config = new_config;
+
                         defmt::info!("Applied new config!");
                         let offset = unsafe {
                             PERSONALIZATION_SECTOR.as_ptr() as u32

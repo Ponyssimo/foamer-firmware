@@ -1,11 +1,13 @@
-import {useEffect, useRef, useState} from "react";
+import {useEffect} from "react";
 import {configStore} from "../stores/configStore";
+import {errorStore} from "../stores/errorStore";
 import {TanStackDevtools} from "@tanstack/react-devtools";
-import {createRootRoute, HeadContent, Scripts} from "@tanstack/react-router";
+import {createRootRoute, Scripts} from "@tanstack/react-router";
 import {TanStackRouterDevtoolsPanel} from "@tanstack/react-router-devtools";
 import Footer from "../components/Footer";
 import Header from "../components/Header";
 import type {Config} from "../stores/configStore";
+import {wasmPromise} from "../wasm";
 
 import appCss from "../styles.css?url";
 
@@ -50,8 +52,21 @@ function RootDocument({children}: {children: React.ReactNode}) {
       }
 
       const subscription = configStore.subscribe((config) => {
-        console.log("Confeeeg", config);
-        localStorage.setItem("config", JSON.stringify(config));
+        wasmPromise.then((wasm) => {
+          const configString = JSON.stringify(config);
+          try {
+            wasm.encode_config(configString);
+          } catch (err: string) {
+            if (typeof err != "string") {
+              throw err;
+            }
+            errorStore.setState((_) => err);
+            return;
+          }
+          errorStore.setState((_) => null);
+
+          localStorage.setItem("config", configString);
+        });
       });
       return () => {
         subscription.unsubscribe();

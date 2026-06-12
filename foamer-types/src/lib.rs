@@ -1,5 +1,6 @@
 #![no_std]
 
+use core::net::SocketAddr;
 use heapless::String;
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
@@ -89,10 +90,25 @@ pub struct WifiConfig {
     pub password: Option<String<32>>,
 }
 
+#[derive(Eq, PartialEq, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "defmt", derive(Format))]
+pub struct WiThrottleServerConfiguration {
+    pub discovery: WiThrottleDiscovery,
+}
+
+#[derive(Eq, PartialEq, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "defmt", derive(Format))]
+pub enum WiThrottleDiscovery {
+    Hardcoded(SocketAddr),
+    #[default]
+    Mdns,
+}
+
 #[derive(Eq, PartialEq, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "defmt", derive(Format))]
 pub struct Config {
     pub wifi_config: WifiConfig,
+    pub withrottle_server: WiThrottleServerConfiguration,
     pub profiles: [Profile; 10],
 }
 
@@ -100,6 +116,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             wifi_config: Default::default(),
+            withrottle_server: Default::default(),
             profiles: core::array::from_fn(|index| Profile {
                 address: [
                     0x7430, 0x8104, 0x2303, 0x2304, //

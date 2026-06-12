@@ -1,20 +1,23 @@
 import { useSelector } from "@tanstack/react-store";
 import { configStore } from "../stores/configStore";
+import { errorStore } from "../stores/errorStore";
 import type { Config } from "../stores/configStore";
 
 export default function FileButton() {
     const config = useSelector(configStore, (config) => config);
+    const error = useSelector(errorStore, (error) => error);
     return (
         <details className="rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1.5 text-sm font-semibold text-[var(--sea-ink)] shadow-[0_8px_22px_rgba(30,90,72,0.08)] transition hover:-translate-y-0.5">
             <summary>File</summary>
             <div className="mt-2 min-w-56 rounded-xl border border-[var(--line)] bg-[var(--header-bg)] p-2 shadow-lg sm:absolute sm:right-0">
+              {error ? (<div className="text-red-600">Bad config, can't save</div>) : (
                 <a
                     href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(config))}`}
                     download="config.json"
                     className="cursor-pointer block"
                 >
                     Save Config To File
-                </a>
+                </a>)}
                 <label htmlFor="configFile" className="block cursor-pointer">
                     Load Config From File
                     <input

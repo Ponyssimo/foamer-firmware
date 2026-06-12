@@ -5,7 +5,7 @@
 #![no_main]
 
 use core::cell::RefCell;
-use core::net::{Ipv4Addr, SocketAddr};
+use core::net::SocketAddr;
 
 use crate::rotary_switch::RotarySwitch;
 use crate::triple_switch::TripleSwitch;
@@ -18,7 +18,7 @@ use embassy_executor::Spawner;
 use embassy_futures::join::join_array;
 use embassy_net::dns::{DnsQueryType, DnsSocket};
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
-use embassy_net::{Config as NetConfig, IpAddress, StackResources};
+use embassy_net::{Config as NetConfig, StackResources};
 use embassy_rp::Peri;
 use embassy_rp::adc::{self, Adc};
 use embassy_rp::bind_interrupts;
@@ -28,6 +28,7 @@ use embassy_rp::gpio::{Input, Level, Output, Pin, Pull};
 use embassy_rp::peripherals::{DMA_CH0, PIO0, USB};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::pio_programs::rotary_encoder::{Direction, PioEncoder, PioEncoderProgram};
+use embassy_rp::pwm::{self, Pwm};
 use embassy_rp::usb::{self, Driver};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, TrySendError};
@@ -45,6 +46,7 @@ use embedded_nal_async::TcpConnect;
 use foamer_types::{
     BRAKE_START_INDEX, BrakeState, Config, HORN_INDEX, TRIPLE_SWITCH_FUNCTION_COUNT,
     TRIPLE_SWITCH_START_INDEX, TRIPLE_SWITCHES, TripleSwitchState, USER_BUTTONS,
+    WiThrottleDiscovery,
 };
 use panic_probe as _;
 use static_cell::StaticCell;
@@ -84,7 +86,7 @@ unsafe fn HardFault(_ef: &cortex_m_rt::ExceptionFrame) -> ! {
     }
 }
 
-async fn submit_request(request: WiThrottleRequest) {
+pub fn submit_request_sync(request: WiThrottleRequest) {
     CANCELLATION_SIGNAL.signal(());
     if let Err(err) = WITHROTTLE_COMMAND_CHANNEL.try_send(request) {
         // Just in case they add variants later on, I want to handle them too...
@@ -97,6 +99,10 @@ async fn submit_request(request: WiThrottleRequest) {
             request
         );
     }
+}
+
+pub async fn submit_request(request: WiThrottleRequest) {
+    submit_request_sync(request)
 }
 
 #[repr(u8)]
@@ -402,6 +408,7 @@ pub enum WiThrottleRequest {
     SetReverser(ReverserPosition),
     SetProfile(usize),
     Heartbeat,
+    Disconnect,
 }
 
 #[embassy_executor::task]
@@ -417,19 +424,19 @@ static CANCELLATION_SIGNAL: CancellationSignal = CancellationSignal::new();
 async fn main(spawner: Spawner) {
     info!("Hello World!");
 
-    let p = embassy_rp::init(Default::default());
+    let mut p = embassy_rp::init(Default::default());
     let mut rng = RoscRng;
 
     let status_light = Output::new(p.PIN_14, Level::High);
     critical_section::with(|cs| {
         *STATUS_LIGHT.borrow_ref_mut(cs) = Some(status_light);
     });
-    let mut connected_light = Output::new(p.PIN_15, Level::Low);
+    let mut connected_light = Output::new(p.PIN_15.reborrow(), Level::Low);
 
     let mut flash =
         embassy_rp::flash::Flash::<_, flash::Blocking, { flash::FLASH_SIZE }>::new_blocking(
             p.FLASH,
-    );
+        );
     static CONFIG: StaticCell<Mutex<RefCell<Config>>> = StaticCell::new();
     defmt::info!("Going to grab the config!");
     let config = CONFIG.init(Mutex::new(RefCell::new(
@@ -480,8 +487,9 @@ async fn main(spawner: Spawner) {
     let driver = Driver::new(p.USB, Irqs);
 
     static HARDWARE_ID: StaticCell<[u8; 32]> = StaticCell::new();
-    let hardware_id = base16ct::lower::encode_str(&control.address().await, HARDWARE_ID.init([0; _])).unwrap();
-    
+    let hardware_id =
+        base16ct::lower::encode_str(&control.address().await, HARDWARE_ID.init([0; _])).unwrap();
+
     let usb_config = {
         let mut config = embassy_usb::Config::new(0x0403, 0x698F);
         config.manufacturer = Some("Mary Strodl");
@@ -582,6 +590,35 @@ async fn main(spawner: Spawner) {
         config,
         flash_channel.sender(),
     )));
+    let user1 = Input::new(p.PIN_21, Pull::Down);
+    if user1.is_high() {
+        let mut config = pwm::Config::default();
+        config.top = 32_768;
+        config.compare_b = 8;
+        core::mem::drop(connected_light);
+        let mut pwm = Pwm::new_output_b(p.PWM_SLICE7, p.PIN_15, config.clone());
+        let mut dir = false;
+        loop {
+            loop {
+                let result = if dir {
+                    config.compare_b.checked_shr(1)
+                } else {
+                    config.compare_b.checked_shl(1)
+                };
+                match result {
+                    Some(0) | None => {
+                        dir = !dir;
+                    }
+                    Some(value) => {
+                        config.compare_b = value;
+                        break;
+                    }
+                }
+            }
+            pwm.set_config(&config);
+            Timer::after(Duration::from_millis(200)).await;
+        }
+    }
 
     let prg = PioEncoderProgram::new(&mut pio.common);
     let throttle_encoder = PioEncoder::new(&mut pio.common, pio.sm1, p.PIN_3, p.PIN_4, &prg);
@@ -601,7 +638,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(defmt::unwrap!(read_function_buttons(UserInputs {
         user: [
             // User 1-4
-            Input::new(p.PIN_21, Pull::Down),
+            user1,
             Input::new(p.PIN_20, Pull::Down),
             Input::new(p.PIN_18, Pull::Down),
             Input::new(p.PIN_2, Pull::Down),
@@ -615,7 +652,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(defmt::unwrap!(read_triple_switches(
         TripleSwitchInputs::new(p.PIN_7, p.PIN_8, p.PIN_9)
     )));
-
 
     while let Err(err) = control
         .join(
@@ -665,34 +701,50 @@ async fn main(spawner: Spawner) {
         let tcp_client = TcpClient::new(stack, &client_state);
         let dns_client = DnsSocket::new(stack);
 
-        let withrottle_servers = dns_client
-            .query("_withrottle._tcp.local", DnsQueryType::A)
-            .await
-            .unwrap_or_else(|_| {
-                defmt::unwrap!(heapless::Vec::from_slice(&[IpAddress::Ipv4(
-                    // Ipv4Addr::new(192, 168, 32, 120),
-                    Ipv4Addr::new(129, 21, 199, 154),
-                )]))
-            });
-        info!("Found withrottle servers: {}", withrottle_servers);
-        let withrottle_socket = match withrottle_servers.first() {
-            Some(&address) => match tcp_client
-                .connect(SocketAddr::new(address.into(), 12090))
-                .await
-            {
-                Ok(socket) => {
-                    info!("Connected to withrottle sever! {}", address);
-                    socket
+        let discovery = critical_section::with(|cs| {
+            let config = config.borrow_ref(cs);
+            config.withrottle_server.discovery.clone()
+        });
+
+        let withrottle_server = match discovery {
+            WiThrottleDiscovery::Hardcoded(address) => address,
+            WiThrottleDiscovery::Mdns => {
+                // This doesn't actually work yet, I need SRV records:
+                // https://github.com/smoltcp-rs/smoltcp/pull/1151
+                match dns_client
+                    .query("_withrottle._tcp.local", DnsQueryType::A)
+                    .await
+                    .map(|results| results.into_iter().next())
+                {
+                    Ok(Some(server)) => SocketAddr::new(server.into(), 12090),
+                    Ok(None) => {
+                        defmt::error!("No withrottle servers found!");
+                        Timer::after(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                    Err(err) => {
+                        defmt::error!("Failed to lookup withrottle servers via mdns {}", err);
+                        Timer::after(Duration::from_secs(1)).await;
+                        continue;
+                    }
                 }
-                Err(err) => {
-                    error!(
-                        "Couldn't connect to withrottle server at {}: {}",
-                        address, err
-                    );
-                    continue;
-                }
-            },
-            _ => continue,
+            }
+        };
+        info!("Connecting to withrottle server: {}", withrottle_server);
+        let withrottle_socket = match tcp_client.connect(withrottle_server).await {
+            Ok(socket) => {
+                defmt::info!("Connected to withrottle sever at {}!", withrottle_server);
+                socket
+            }
+            Err(err) => {
+                defmt::error!(
+                    "Couldn't connect to withrottle server at {}: {}",
+                    withrottle_server,
+                    err
+                );
+                Timer::after(Duration::from_secs(1)).await;
+                continue;
+            }
         };
         let hardware_address = stack.hardware_address();
         let hardware_address_bytes = hardware_address.as_bytes();
@@ -724,9 +776,13 @@ async fn main(spawner: Spawner) {
         Timer::after(Duration::from_secs(1)).await;
         connected_light.set_low();
 
-        loop {
+        'client: loop {
             while let Ok(message) = WITHROTTLE_COMMAND_CHANNEL.try_receive() {
                 info!("Got a message from the command channel: {}", message);
+                if let WiThrottleRequest::Disconnect = message {
+                    defmt::info!("Disconnecting due to command channel message...");
+                    break 'client;
+                }
                 let result = async {
                     match message {
                         WiThrottleRequest::SetFunctionState(function_id, state) => {
@@ -748,6 +804,7 @@ async fn main(spawner: Spawner) {
                         WiThrottleRequest::Heartbeat => {
                             withrottle_client.heartbeat().await?;
                         }
+                        WiThrottleRequest::Disconnect => defmt::unreachable!(),
                     }
                     Ok::<_, WiThrottleError>(())
                 }

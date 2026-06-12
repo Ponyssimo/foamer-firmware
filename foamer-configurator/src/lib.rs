@@ -30,7 +30,7 @@ pub fn decode_config(message: &[u8]) -> String {
 }
 
 #[wasm_bindgen]
-pub fn encode_config(message: &str) -> Vec<u8> {
+pub fn encode_config(message: &str) -> Result<Vec<u8>, String> {
     set_panic_hook();
     encode_to_postcard::<Config>(&message)
 }
@@ -40,7 +40,12 @@ fn decode_to_json<'a, T: serde::Serialize + serde::Deserialize<'a>>(message: &'a
     serde_json::to_string(&message).unwrap()
 }
 
-fn encode_to_postcard<'a, T: serde::Serialize + serde::Deserialize<'a>>(message: &'a str) -> Vec<u8> {
-    let message: T = serde_json::from_str(message).expect(&format!("Failed to deserialize message: {message:?}"));
-    postcard::to_stdvec(&message).unwrap()
+fn encode_to_postcard<'a, T: serde::Serialize + serde::Deserialize<'a>>(message: &'a str) -> Result<Vec<u8>, String> {
+
+    let deserializer = &mut serde_json::Deserializer::from_str(message);
+    let message: T = serde_path_to_error::deserialize(deserializer).map_err(|err| {
+        format!("Bad input at {}: {}", err.path(), err.inner())
+    })?;
+
+    Ok(postcard::to_stdvec(&message).unwrap())
 }
