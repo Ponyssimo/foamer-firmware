@@ -3,7 +3,7 @@ name: Build Firmware
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ master ]
 
 jobs:
   build:
@@ -16,18 +16,18 @@ jobs:
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          target: thumbv7em-none-eabihf
+          target: thumbv6m-none-eabi
 
       - name: Install cargo-make
         run: cargo install cargo-make
 
       - name: Build UF2
-        run: cargo make uf2 --release
+        run: cd foamer-firmware && cargo make uf2 --release
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
           name: firmware
           path: |
-            foamer-firmware.hex
-            foamer-firmware.uf2
+            foamer-firmware/foamer-firmware.hex
+            foamer-firmware/foamer-firmware.uf2
