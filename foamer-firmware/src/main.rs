@@ -404,120 +404,14 @@ pub enum WiThrottleRequest {
     Heartbeat,
 }
 
-// #[embassy_executor::task]
-// async fn write_serial_task(
-//     mut serial: CdcAcmClass<'static, Driver<'static, USB>>,
-//     rx: Receiver<'static, CriticalSectionRawMutex, heapless::Vec<u8, 8>, 100>,
-// ) -> ! {
-//     loop {
-//         let packet = rx.receive().await;
-//         defmt::unwrap!(serial.write_packet(&packet).await);
-//     }
-// }
-
 #[embassy_executor::task]
 async fn usb_task(mut usb: UsbDevice<'static, Driver<'static, USB>>) -> ! {
     usb.run().await
 }
 
-// #[derive(Format)]
-// struct AcmSerial<'a>(Sender<'a, CriticalSectionRawMutex, heapless::Vec<u8, 8>, 100>);
-
-// impl<'a> defmt_serial::EraseWrite for AcmSerial<'a> {
-//     fn write(&mut self, buf: &[u8]) {
-//         for chunk in buf.chunks(8) {
-//             let buf = defmt::unwrap!(heapless::Vec::<u8, 8>::from_slice(chunk));
-//             if let Err(err) = self.0.try_send(buf) {
-//                 defmt::error!("Acm error: {}", err);
-//             }
-//         }
-//     }
-
-//     fn flush(&mut self) {
-//         defmt::trace!("I should be flushing...");
-//     }
-// }
-
 static WITHROTTLE_COMMAND_CHANNEL: Channel<CriticalSectionRawMutex, WiThrottleRequest, 16> =
     Channel::new();
 static CANCELLATION_SIGNAL: CancellationSignal = CancellationSignal::new();
-
-// let profiles = PROFILES.init(core::array::from_fn(|index| Profile {
-//     address: [
-//         0x7430, 0x8104, 0x2303, 0x2304, //
-//         0x7420, 0x3600, 0x1957, 0x8014, //
-//         0x7420, 0x8104,
-//     ]
-//     .map(Address::Long)[index],
-//     functions: [
-//         // User 1-4
-//         Some(Function::Hardcoded {
-//             id: 8,
-//             momentary: false,
-//         }),
-//         None,
-//         None,
-//         None,
-//         Some(Function::Hardcoded {
-//             id: 1,
-//             momentary: true,
-//         }), // Bell
-//         Some(Function::Hardcoded {
-//             id: 7,
-//             momentary: false,
-//         }), // Dynamics
-//         // Tri-Switches
-//         // Ditch lights (Up, Middle, Down)
-//         Some(Function::Hardcoded {
-//             id: 4,
-//             momentary: true,
-//         }),
-//         None,
-//         Some(Function::Hardcoded {
-//             id: 12,
-//             momentary: true,
-//         }),
-//         // Headlight rear (Up, Middle, Down)
-//         Some(Function::Hardcoded {
-//             id: 10,
-//             momentary: true,
-//         }),
-//         None,
-//         Some(Function::Hardcoded {
-//             id: 11,
-//             momentary: true,
-//         }),
-//         // Headlight front (Up, Middle, Down)
-//         Some(Function::Hardcoded {
-//             id: 0,
-//             momentary: true,
-//         }),
-//         None,
-//         Some(Function::Hardcoded {
-//             id: 3,
-//             momentary: true,
-//         }),
-//         // Brake
-//         None,
-//         Some(Function::Hardcoded {
-//             id: 31,
-//             momentary: true,
-//         }),
-//         Some(Function::Hardcoded {
-//             id: 30,
-//             momentary: true,
-//         }),
-//         Some(Function::Hardcoded {
-//             id: 6,
-//             momentary: true,
-//         }),
-//         Some(Function::EmergencyStop), // Emergency
-//         Some(Function::Hardcoded {
-//             id: 2,
-//             momentary: true,
-//         }), // Horn
-//     ],
-// }));
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -532,17 +426,51 @@ async fn main(spawner: Spawner) {
     });
     let mut connected_light = Output::new(p.PIN_15, Level::Low);
 
+    // Start wifi stuff:
+
+    let fw = cyw43::aligned_bytes!("../cyw43-firmware/43439A0.bin");
+    let clm = cyw43::aligned_bytes!("../cyw43-firmware/43439A0_clm.bin");
+    // To make flashing faster for development, you may want to flash the firmwares independently
+    // at hardcoded addresses, instead of baking them into the program with `include_bytes!`:
+    //     probe-rs download 43439A0.bin --binary-format bin --chip RP2040 --base-address 0x10100000
+    //     probe-rs download 43439A0_clm.bin --binary-format bin --chip RP2040 --base-address 0x10140000
+    // let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 230321) };
+    // let fw = unsafe { &*(fw as *const [u8] as *const cyw43::Aligned<cyw43::A4, [u8]>) };
+    // let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
+    let nvram = cyw43::aligned_bytes!("../cyw43-firmware/nvram_rp2040.bin");
+
+    let pwr = Output::new(p.PIN_23, Level::Low);
+    let cs = Output::new(p.PIN_25, Level::High);
+    let mut pio = Pio::new(p.PIO0, Irqs);
+    let spi = PioSpi::new(
+        &mut pio.common,
+        pio.sm0,
+        DEFAULT_CLOCK_DIVIDER,
+        pio.irq0,
+        cs,
+        p.PIN_24,
+        p.PIN_29,
+        embassy_rp::dma::Channel::new(p.DMA_CH0, Irqs),
+    );
+
+    static STATE: StaticCell<cyw43::State> = StaticCell::new();
+    let state = STATE.init(cyw43::State::new());
+    let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, fw, nvram).await;
+    spawner.spawn(defmt::unwrap!(cyw43_task(runner)));
+
     // USB shit
 
     // Create the driver, from the HAL.
     let driver = Driver::new(p.USB, Irqs);
 
-    // Create embassy-usb Config
+    static HARDWARE_ID: StaticCell<[u8; 32]> = StaticCell::new();
+    let hardware_id = base16ct::lower::encode_str(&control.address().await, HARDWARE_ID.init([0; _])).unwrap();
+    
     let usb_config = {
-        let mut config = embassy_usb::Config::new(0x1209, 0x0001);
-        config.manufacturer = Some("Embassy");
-        config.product = Some("USB-serial example");
-        config.serial_number = Some("12345678");
+        let mut config = embassy_usb::Config::new(0x0403, 0x698F);
+        config.manufacturer = Some("Mary Strodl");
+        config.product = Some("Foamer");
+        config.serial_number = Some(hardware_id);
         config.max_power = 100;
         config.max_packet_size_0 = 64;
         config
@@ -591,66 +519,68 @@ async fn main(spawner: Spawner) {
     };
 
     let profile_usb_endpoints = ProfileUsbEndpoints::new(webusb_config, &mut builder);
-    // // Add a vendor-specific function (class 0xFF), and corresponding interface,
-    // // that uses our custom handler.
-    // {
-    //     let mut function = builder.function(0xFF, 0, 0);
-    //     let mut interface = function.interface();
-    //     let _alt = interface.alt_setting(0xFF, 0, 0, None);
-    //     handler.if_num = interface.interface_number();
-    // }
-    // let handler = ProfileUsbHandler::new(
-    // builder.handler(&mut handler);
-
-    // // Create classes on the builder.
-    // let serial = {
-    //     static STATE: StaticCell<State> = StaticCell::new();
-    //     let state = STATE.init(State::new());
-    //     CdcAcmClass::new(&mut builder, state, 64)
-    // };
 
     // Build the builder.
     let usb = builder.build();
 
-    // // static SERIAL: StaticCell<CdcAcmClass<Driver<'static, USB>>> = StaticCell::new();
-    // // let serial = SERIAL.init(serial);
-    // static CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, heapless::Vec<u8, 8>, 100>> =
-    //     StaticCell::new();
-    // let channel = CHANNEL.init(Channel::new());
-
-    // spawner.spawn(unwrap!(write_serial_task(serial, channel.receiver())));
-
-    // static ACM_SERIAL: StaticCell<AcmSerial<'static>> = StaticCell::new();
-    // let acm_serial = ACM_SERIAL.init(AcmSerial(channel.sender()));
-    // defmt_serial::defmt_serial(acm_serial);
-
     // Run the USB device.
     spawner.spawn(unwrap!(usb_task(usb)));
 
-    let fw = cyw43::aligned_bytes!("../cyw43-firmware/43439A0.bin");
-    let clm = cyw43::aligned_bytes!("../cyw43-firmware/43439A0_clm.bin");
-    // To make flashing faster for development, you may want to flash the firmwares independently
-    // at hardcoded addresses, instead of baking them into the program with `include_bytes!`:
-    //     probe-rs download 43439A0.bin --binary-format bin --chip RP2040 --base-address 0x10100000
-    //     probe-rs download 43439A0_clm.bin --binary-format bin --chip RP2040 --base-address 0x10140000
-    // let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 230321) };
-    // let fw = unsafe { &*(fw as *const [u8] as *const cyw43::Aligned<cyw43::A4, [u8]>) };
-    // let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
-    let nvram = cyw43::aligned_bytes!("../cyw43-firmware/nvram_rp2040.bin");
+    control.init(clm).await;
+    control
+        .set_power_management(cyw43::PowerManagementMode::PowerSave)
+        .await;
 
-    let pwr = Output::new(p.PIN_23, Level::Low);
-    let cs = Output::new(p.PIN_25, Level::High);
-    let mut pio = Pio::new(p.PIO0, Irqs);
-    let spi = PioSpi::new(
-        &mut pio.common,
-        pio.sm0,
-        DEFAULT_CLOCK_DIVIDER,
-        pio.irq0,
-        cs,
-        p.PIN_24,
-        p.PIN_29,
-        embassy_rp::dma::Channel::new(p.DMA_CH0, Irqs),
+    let net_config = NetConfig::dhcpv4(Default::default());
+    // Use static IP configuration instead of DHCP
+    //let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
+    //    address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 69, 2), 24),
+    //    dns_servers: Vec::new(),
+    //    gateway: Some(Ipv4Address::new(192, 168, 69, 1)),
+    //});
+
+    // Generate random seed
+    let seed = rng.next_u64();
+
+    // Init network stack
+    static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
+    let (stack, runner) = embassy_net::new(
+        net_device,
+        net_config,
+        RESOURCES.init(StackResources::new()),
+        seed,
     );
+
+    let mut flash =
+        embassy_rp::flash::Flash::<_, flash::Blocking, { flash::FLASH_SIZE }>::new_blocking(
+            p.FLASH,
+    );
+    static CONFIG: StaticCell<Mutex<RefCell<Config>>> = StaticCell::new();
+    defmt::info!("Going to grab the config!");
+    let config = CONFIG.init(Mutex::new(RefCell::new(
+        match flash::read_config(&mut flash) {
+            Ok(config) => config,
+            Err(err) => {
+                defmt::error!("Invalid config! Giving a default instead... {}", err);
+                Default::default()
+            }
+        },
+    )));
+    let wifi_config = config.get_mut().get_mut().wifi_config.clone();
+
+    static FLASH_CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, FlashCommand, 1>> =
+        StaticCell::new();
+    let flash_channel = FLASH_CHANNEL.init(Channel::new());
+    spawner.spawn(defmt::unwrap!(crate::flash::flash_task(
+        flash,
+        config,
+        flash_channel.receiver()
+    )));
+    spawner.spawn(defmt::unwrap!(crate::profile_usb::usb_task(
+        profile_usb_endpoints,
+        config,
+        flash_channel.sender(),
+    )));
 
     let prg = PioEncoderProgram::new(&mut pio.common);
     let throttle_encoder = PioEncoder::new(&mut pio.common, pio.sm1, p.PIN_3, p.PIN_4, &prg);
@@ -685,66 +615,6 @@ async fn main(spawner: Spawner) {
         TripleSwitchInputs::new(p.PIN_7, p.PIN_8, p.PIN_9)
     )));
 
-    static STATE: StaticCell<cyw43::State> = StaticCell::new();
-    let state = STATE.init(cyw43::State::new());
-    let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, fw, nvram).await;
-    spawner.spawn(defmt::unwrap!(cyw43_task(runner)));
-
-    control.init(clm).await;
-    control
-        .set_power_management(cyw43::PowerManagementMode::PowerSave)
-        .await;
-
-    let net_config = NetConfig::dhcpv4(Default::default());
-    // Use static IP configuration instead of DHCP
-    //let config = embassy_net::Config::ipv4_static(embassy_net::StaticConfigV4 {
-    //    address: Ipv4Cidr::new(Ipv4Address::new(192, 168, 69, 2), 24),
-    //    dns_servers: Vec::new(),
-    //    gateway: Some(Ipv4Address::new(192, 168, 69, 1)),
-    //});
-
-    // Generate random seed
-    let seed = rng.next_u64();
-
-    // Init network stack
-    static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
-    let (stack, runner) = embassy_net::new(
-        net_device,
-        net_config,
-        RESOURCES.init(StackResources::new()),
-        seed,
-    );
-
-    static CONFIG: StaticCell<Mutex<RefCell<Config>>> = StaticCell::new();
-    let mut flash =
-        embassy_rp::flash::Flash::<_, flash::Blocking, { flash::FLASH_SIZE }>::new_blocking(
-            p.FLASH,
-        );
-    defmt::info!("Going to grab the config!");
-    let config = CONFIG.init(Mutex::new(RefCell::new(
-        match flash::read_config(&mut flash) {
-            Ok(config) => config,
-            Err(err) => {
-                defmt::error!("Invalid config! Giving a default instead... {}", err);
-                Default::default()
-            }
-        },
-    )));
-    let wifi_config = config.get_mut().get_mut().wifi_config.clone();
-
-    static FLASH_CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, FlashCommand, 1>> =
-        StaticCell::new();
-    let flash_channel = FLASH_CHANNEL.init(Channel::new());
-    spawner.spawn(defmt::unwrap!(crate::flash::flash_task(
-        flash,
-        config,
-        flash_channel.receiver()
-    )));
-    spawner.spawn(defmt::unwrap!(crate::profile_usb::usb_task(
-        profile_usb_endpoints,
-        config,
-        flash_channel.sender(),
-    )));
 
     while let Err(err) = control
         .join(

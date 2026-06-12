@@ -90,10 +90,29 @@ export default function ConnectButton() {
         };
     }, []);
 
+  useEffect(() => {
+    const connectCallback = (event) => {
+      if (!deviceStore.state?.usbDevice) {
+        claimDevice(event.device);
+      }
+    };
+    const disconnectCallback = (event) => {
+      if (event.device) {
+        deviceStore.setState((_) => null);
+      }
+    };
+    navigator.usb.addEventListener("connect", connectCallback);
+    navigator.usb.addEventListener("disconnect", disconnectCallback);
+    return () => {
+      navigator.usb.removeEventListener("connect", connectCallback);
+      navigator.usb.removeEventListener("disconnect", connectCallback);
+    };
+  }, []);
+
     return (
         <details className="rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1.5 text-sm font-semibold text-[var(--sea-ink)] shadow-[0_8px_22px_rgba(30,90,72,0.08)] transition hover:-translate-y-0.5">
             <summary>
-                {device ? `Device: ${device.productName}` : "Connect Device"}
+              {device ? `Device: ${device.productName} - ${device.serialNumber}` : "Connect Device"}
             </summary>
             <div className="mt-2 min-w-56 rounded-xl border border-[var(--line)] bg-[var(--header-bg)] p-2 shadow-lg sm:absolute sm:right-0">
                 {device ? (
@@ -137,7 +156,7 @@ export default function ConnectButton() {
                             navigator.usb
                                 .requestDevice({
                                     filters: [
-                                        { vendorId: 0x1209, productId: 0x0001 },
+                                        { vendorId: 0x0403, productId: 0x698f },
                                     ],
                                 })
                                 .then(async (usbDevice) => {

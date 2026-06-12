@@ -31,9 +31,13 @@ pub struct ProfileUsbEndpoints<'d, D: Driver<'d>> {
 
 impl<'d, D: Driver<'d>> ProfileUsbEndpoints<'d, D> {
     pub fn new(webusb_config: &WebUsbConfig<'d>, builder: &mut Builder<'d, D>) -> Self {
-        let mut function = builder.function(0xff, 0x00, 0x00);
+        // Why these numbers? Well...
+        // https://github.com/systemd/systemd/blob/ff88bc06b4eb959d348acecd22598d04c3077a5f/rules.d/70-uaccess.rules.in#L84-L96
+        // ...Not proud of that! Hopefully our VID and PID will be well-recognized
+        // some day and this can go back to a more normal vendor-specific class
+        let mut function = builder.function(0xff, 0x42, 0x01);
         let mut interface = function.interface();
-        let mut alt = interface.alt_setting(0xff, 0x00, 0x00, None);
+        let mut alt = interface.alt_setting(0xff, 0x42, 0x01, None);
 
         let write_endpoint = alt.endpoint_bulk_in(None, webusb_config.max_packet_size);
         let read_endpoint = alt.endpoint_bulk_out(None, webusb_config.max_packet_size);
