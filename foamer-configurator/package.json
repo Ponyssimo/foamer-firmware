@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "vite dev --port 3000",
     "generate-routes": "tsr generate",
-    "build": "wasm-pack build --release --panic-unwind && vite build",
+    "build": "wasm-pack build --release && pnpm run build-web",
+    "build-web": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "format": "biome format",

@@ -1,4 +1,5 @@
 mod utils;
+use crate::utils::set_panic_hook;
 
 use foamer_types::Config;
 use foamer_types::profile_usb_types::{InControlMessage, OutControlMessage};
@@ -6,26 +7,31 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub fn create_read_request() -> Vec<u8> {
+    set_panic_hook();
     postcard::to_stdvec(&OutControlMessage::ReadConfig).unwrap()
 }
 
 #[wasm_bindgen]
 pub fn create_write_request(length: usize) -> Vec<u8> {
+    set_panic_hook();
     postcard::to_stdvec(&OutControlMessage::WriteConfig {length}).unwrap()
 }
 
 #[wasm_bindgen]
 pub fn decode_in_control_message(message: &[u8]) -> String {
+    set_panic_hook();
     decode_to_json::<InControlMessage>(&message)
 }
 
 #[wasm_bindgen]
 pub fn decode_config(message: &[u8]) -> String {
+    set_panic_hook();
     decode_to_json::<Config>(&message)
 }
 
 #[wasm_bindgen]
 pub fn encode_config(message: &str) -> Vec<u8> {
+    set_panic_hook();
     encode_to_postcard::<Config>(&message)
 }
 

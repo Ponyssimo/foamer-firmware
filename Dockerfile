@@ -6,7 +6,7 @@ COPY . /app/
 
 WORKDIR /app/foamer-configurator
 
-RUN wasm-pack build --release --panic-unwind
+RUN wasm-pack build --release
 
 FROM docker.io/node:26-alpine3.24 as node
 
@@ -22,7 +22,7 @@ WORKDIR /app/foamer-configurator
 
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
-RUN NODE_ENV=production pnpm run build
+RUN NODE_ENV=production pnpm run build-web
 
 FROM docker.io/nginxinc/nginx-unprivileged as serve
 RUN sed -i 's/ root /try_files $uri $uri\/ \/_shell.html =404; root/' /etc/nginx/conf.d/default.conf
