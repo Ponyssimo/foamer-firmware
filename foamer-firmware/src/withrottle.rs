@@ -555,12 +555,4 @@ where
         }
         Ok(buffer)
     }
-
-    async fn read_bytes<const N: usize>(
-        &mut self,
-    ) -> Result<[u8; N], ReadExactError<BufReaderError<Conn::Error>>> {
-        let mut result = [0u8; N];
-        self.connection.read_exact(&mut result).await?;
-        Ok(result)
-    }
 }

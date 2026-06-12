@@ -59,35 +59,6 @@ where
     type Error = BufReaderError<R::Error>;
 }
 
-pub enum NewlineError<E> {
-    NotNewline,
-    Other(E),
-}
-
-impl<E: Format> Format for NewlineError<E> {
-    fn format(&self, fmt: defmt::Formatter<'_>) {
-        match self {
-            Self::NotNewline => defmt::write!(fmt, "BufReader::NotNewline"),
-            Self::Other(err) => defmt::write!(fmt, "BufReader::Other({})", err),
-        }
-    }
-}
-
-impl<E: Clone> Clone for NewlineError<E> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::NotNewline => Self::NotNewline,
-            Self::Other(err) => Self::Other(err.clone()),
-        }
-    }
-}
-
-impl<E> From<E> for NewlineError<E> {
-    fn from(error: E) -> Self {
-        Self::Other(error)
-    }
-}
-
 pub enum ReadLineError<'a, T: ErrorType> {
     ReadExactError(ReadExactError<T::Error>),
     NoNewline(&'a [u8], u8),

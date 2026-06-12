@@ -26,7 +26,6 @@ pub struct ProfileUsbHandler<'d, D: Driver<'d>> {
 pub struct ProfileUsbEndpoints<'d, D: Driver<'d>> {
     write_endpoint: D::EndpointIn,
     read_endpoint: D::EndpointOut,
-    max_packet_size: u16,
 }
 
 impl<'d, D: Driver<'d>> ProfileUsbEndpoints<'d, D> {
@@ -44,7 +43,6 @@ impl<'d, D: Driver<'d>> ProfileUsbEndpoints<'d, D> {
         Self {
             write_endpoint,
             read_endpoint,
-            max_packet_size: webusb_config.max_packet_size,
         }
     }
 }
