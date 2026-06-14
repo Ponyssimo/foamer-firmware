@@ -1,5 +1,5 @@
 [workspace]
-members = [
+members = ["foamer-cli",
     "foamer-configurator",
     "foamer-firmware",
     "foamer-types",
