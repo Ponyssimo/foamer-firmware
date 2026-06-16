@@ -320,7 +320,7 @@ async fn read_potentiometers(
         match horn_released {
             Some(horn_released) => {
                 // Horn apply causes horn value to DECREASE
-                let horn_state = horn < horn_released && (horn_released - horn > 250);
+                let horn_state = horn < horn_released && ((horn_released - horn) > 10);
                 if horn_state != last_horn_state {
                     defmt::warn!("Horn state now: {}", horn_state);
                     submit_request(WiThrottleRequest::SetFunctionState(HORN_INDEX, horn_state))

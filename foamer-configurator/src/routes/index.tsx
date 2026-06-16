@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
     configStore,
     BRAKE_START_INDEX,
+    HORN_INDEX,
     TRIPLE_SWITCHES,
     TRIPLE_SWITCH_FUNCTION_COUNT,
     TRIPLE_SWITCH_START_INDEX,
@@ -91,6 +92,16 @@ function App() {
                             );
                             return `${TRIPLE_SWITCH_LABELS[switchId]} ${TRIPLE_SWITCH_POSITION_LABELS[positionId]}`;
                         })}
+                />
+
+                <FunctionGroup
+                    groupName="Horn"
+                    typeLabel={(_name, _index) =>
+                        "When horn lever is held"
+                    }
+                    start={HORN_INDEX}
+                    profileId={profileId}
+                    functions={["Horn lever"]}
                 />
 
                 <FunctionGroup

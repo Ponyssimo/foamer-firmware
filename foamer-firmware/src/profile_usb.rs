@@ -115,6 +115,9 @@ impl<'d, D: Driver<'d>> ProfileUsbHandler<'d, D> {
                         .write_transfer(config_buf, false)
                         .await?;
                 }
+                msg => {
+                    defmt::error!("Unimplemented control message: {}", msg);
+                }
             }
         }
     }
