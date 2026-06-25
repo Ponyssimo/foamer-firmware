@@ -1,4 +1,4 @@
-name: Code quality
+name: Web Code quality
 
 on:
   push:
@@ -18,6 +18,16 @@ jobs:
         uses: biomejs/setup-biome@v2
       - name: Run Biome
         run: biome ci .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
