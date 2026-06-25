@@ -27,9 +27,3 @@ serde_path_to_error = "0.1.20"
 [dev-dependencies]
 wasm-bindgen-test = "0.3.34"
 
-[profile.release]
-# Tell `rustc` to optimize for small code size.
-opt-level = "s"
-
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false
