@@ -11,7 +11,7 @@ use embassy_usb::{
     driver::Driver,
     driver::{Endpoint, EndpointError, EndpointIn, EndpointOut},
 };
-use foamer_types::{serialize_config, Config};
+use foamer_types::{Config, serialize_config};
 use heapless::Vec;
 
 use crate::flash::FlashCommand;

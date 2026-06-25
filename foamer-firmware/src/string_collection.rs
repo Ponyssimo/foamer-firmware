@@ -1,6 +1,6 @@
 use core::ops::Range;
-use heapless::Vec;
 use defmt::Format;
+use heapless::Vec;
 
 #[derive(Format)]
 pub struct StringCollection<const N: usize, const K: usize> {
@@ -46,8 +46,7 @@ impl<const N: usize, const K: usize> StringCollection<N, K> {
             if length_delta > 0 {
                 // Adding new characters
                 for (index, item) in new_bytes.iter().copied().enumerate().skip(old_bytes.len()) {
-                    defmt::unwrap!(self.heap
-                        .insert(self.pairs[key].start + index, item));
+                    defmt::unwrap!(self.heap.insert(self.pairs[key].start + index, item));
                 }
             } else {
                 // Removing old characters
