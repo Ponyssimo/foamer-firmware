@@ -19,6 +19,9 @@ export function WiThrottleConfig() {
             <p className="island-kicker mb-2">
                 WiThrottle Server Configuration
             </p>
+
+            <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">Which WiThrottle server should be used?</p>
+          
             <label
                 htmlFor="discovery"
                 className="block text-sm font-semibold text-[var(--sea-ink)]"

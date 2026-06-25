@@ -113,7 +113,7 @@ function FunctionSwitch({
 
     const id = `function-${index}`;
     return (
-        <section className="island-shell mt-8 rounded-2xl p-6">
+        <section className="island-shell rounded-2xl p-6">
             <p className="island-kicker mb-2">{name}</p>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <label
@@ -268,6 +268,7 @@ function FunctionSwitch({
                                 "All",
                                 "Leading",
                                 "Trailing",
+                                "Last",
                                 "Inner",
                             ] as const
                         ).map((name) => (
@@ -287,7 +288,8 @@ function FunctionSwitch({
 const NICE_BEHAVIOR_LABELS: Record<FunctionBehavior, string> = {
   All: "All units",
   Leading: "Leading unit only",
-  Trailing: "Last unit only",
+  Trailing: "Trailing units only",
+  Last: "Last unit only",
   Inner: "Inner units only",
 };
 

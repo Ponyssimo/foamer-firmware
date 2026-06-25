@@ -9,7 +9,12 @@ import {createStore} from "@tanstack/react-store";
 // }
 export type FunctionType = "Label" | "Hardcoded" | "EmergencyStop";
 export type Function = Label | Hardcoded | "EmergencyStop";
-export type FunctionBehavior = "All" | "Leading" | "Trailing" | "Inner";
+export type FunctionBehavior =
+  | "All"
+  | "Leading"
+  | "Trailing"
+  | "Last"
+  | "Inner";
 export type FunctionConfig = {
   function: Function;
   behavior: FunctionBehavior;

@@ -248,6 +248,7 @@ pre code {
 
 .demo-input,
 .demo-select,
+.demo-button-input,
 .demo-textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -259,6 +260,7 @@ pre code {
 }
 
 .demo-input,
+.demo-button-input,
 .demo-select {
   padding: 0.7rem 0.9rem;
 }
@@ -278,6 +280,29 @@ pre code {
 .demo-textarea:focus {
   border-color: color-mix(in oklab, var(--lagoon-deep) 58%, var(--line));
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--lagoon) 24%, transparent);
+}
+
+.demo-button-input {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--lagoon-deep) 34%, var(--line));
+  background: color-mix(in oklab, var(--lagoon) 22%, var(--surface-strong));
+  color: var(--sea-ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.demo-button-input:hover {
+  transform: translateY(-1px);
+  background: color-mix(in oklab, var(--lagoon) 30%, var(--surface-strong));
+}
+
+.demo-button-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
 }
 
 .demo-button {

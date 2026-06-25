@@ -51,61 +51,76 @@ function App() {
                         ))}
                     </select>
                 </label>
+            </section>
+            <section className="island-shell mt-8 rounded-2xl p-6">
+                <p className="island-kicker mb-2">Consist</p>
+                <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">Which locomotives should be controlled by this profile?</p>
+
                 <Consist profileId={profileId} />
+            </section>
 
-                <FunctionGroup
-                    groupName="Function Buttons"
-                    typeLabel={(name) => `When ${name} is pressed`}
-                    start={0}
-                    profileId={profileId}
-                    functions={new Array(4)
-                        .fill(null)
-                        .map((_, index) => `User ${index + 1}`)
-                        .concat(["Bell", "Dynamics"])}
-                />
+            <section className="island-shell mt-8 rounded-2xl p-6">
+                <p className="island-kicker mb-2">Inputs</p>
+                <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">What should happen when buttons are pressed?</p>
 
-                <FunctionGroup
-                    groupName="Lights"
-                    typeLabel={(_name, index) =>
-                        `When ${TRIPLE_SWITCH_LABELS[Math.floor(index / TRIPLE_SWITCH_FUNCTION_COUNT)]} switch is in the ${TRIPLE_SWITCH_POSITION_LABELS[index % TRIPLE_SWITCH_FUNCTION_COUNT]} position`
-                    }
-                    start={TRIPLE_SWITCH_START_INDEX}
-                    profileId={profileId}
-                    functions={new Array(
-                        TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT,
-                    )
-                        .fill(null)
-                        .map((_, index) => {
-                            const positionId =
-                                index % TRIPLE_SWITCH_FUNCTION_COUNT;
-                            const switchId = Math.floor(
-                                index / TRIPLE_SWITCH_FUNCTION_COUNT,
-                            );
-                            return `${TRIPLE_SWITCH_LABELS[switchId]} ${TRIPLE_SWITCH_POSITION_LABELS[positionId]}`;
-                        })}
-                />
-
-                <FunctionGroup
-                    groupName="Horn"
-                    typeLabel={(_name, _index) =>
-                        "When horn lever is held"
-                    }
-                    start={HORN_INDEX}
-                    profileId={profileId}
-                    functions={["Horn lever"]}
-                />
-
-                <FunctionGroup
-                    groupName="Brake"
-                    typeLabel={(name) => `When brake handle is in ${name}`}
-                    start={BRAKE_START_INDEX}
-                    profileId={profileId}
-                    functions={BRAKE_LABELS}
-                />
+                <div className="flex gap-8 flex-col">
+                    <FunctionGroup
+                        groupName="Function Buttons"
+                        typeLabel={(name) => `When ${name} is pressed`}
+                        start={0}
+                        profileId={profileId}
+                        functions={new Array(4)
+                            .fill(null)
+                            .map((_, index) => `User ${index + 1}`)
+                            .concat(["Bell", "Dynamics"])}
+                    />
+    
+                    <FunctionGroup
+                        groupName="Lights"
+                        typeLabel={(_name, index) =>
+                            `When ${TRIPLE_SWITCH_LABELS[Math.floor(index / TRIPLE_SWITCH_FUNCTION_COUNT)]} switch is in the ${TRIPLE_SWITCH_POSITION_LABELS[index % TRIPLE_SWITCH_FUNCTION_COUNT]} position`
+                        }
+                        start={TRIPLE_SWITCH_START_INDEX}
+                        profileId={profileId}
+                        functions={new Array(
+                            TRIPLE_SWITCHES * TRIPLE_SWITCH_FUNCTION_COUNT,
+                        )
+                            .fill(null)
+                            .map((_, index) => {
+                                const positionId =
+                                    index % TRIPLE_SWITCH_FUNCTION_COUNT;
+                                const switchId = Math.floor(
+                                    index / TRIPLE_SWITCH_FUNCTION_COUNT,
+                                );
+                                return `${TRIPLE_SWITCH_LABELS[switchId]} ${TRIPLE_SWITCH_POSITION_LABELS[positionId]}`;
+                            })}
+                    />
+    
+                    <FunctionGroup
+                        groupName="Horn"
+                        typeLabel={(_name, _index) =>
+                            "When horn lever is held"
+                        }
+                        start={HORN_INDEX}
+                        profileId={profileId}
+                        functions={["Horn lever"]}
+                    />
+    
+                    <FunctionGroup
+                        groupName="Brake"
+                        typeLabel={(name) => `When brake handle is in ${name}`}
+                        start={BRAKE_START_INDEX}
+                        profileId={profileId}
+                        functions={BRAKE_LABELS}
+                    />
+                </div>
             </section>
 
             <section className="island-shell mt-8 rounded-2xl p-6">
                 <p className="island-kicker mb-2">WiFi Configuration</p>
+
+                <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">What WiFi network should be used?</p>
+              
                 <label
                     htmlFor="ssid"
                     className="block text-sm font-semibold text-[var(--sea-ink)]"

@@ -45,8 +45,10 @@ pub enum FunctionBehavior {
     All,
     /// First locomotive in list
     Leading,
-    /// Last locomotive in list
+    /// All locomotives except first
     Trailing,
+    /// Last locomotive in list
+    Last,
     /// All locomotives except first and last
     Inner,
 }
@@ -235,7 +237,7 @@ impl Default for Config {
                             id: 10,
                             momentary: true,
                         },
-                        behavior: FunctionBehavior::Trailing,
+                        behavior: FunctionBehavior::Last,
                     }),
                     None,
                     Some(FunctionConfig {
@@ -243,7 +245,7 @@ impl Default for Config {
                             id: 11,
                             momentary: true,
                         },
-                        behavior: FunctionBehavior::Trailing,
+                        behavior: FunctionBehavior::Last,
                     }),
                     // Headlight front (Up, Middle, Down)
                     Some(FunctionConfig {

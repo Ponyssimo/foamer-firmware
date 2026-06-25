@@ -488,7 +488,8 @@ where
             && match function.behavior {
                 FunctionBehavior::All => true,
                 FunctionBehavior::Leading => address_index == 0,
-                FunctionBehavior::Trailing => address_index == self.address.len() - 1,
+                FunctionBehavior::Trailing => address_index != 0,
+                FunctionBehavior::Last => address_index == self.address.len() - 1,
                 FunctionBehavior::Inner => {
                     address_index != 0 && address_index != self.address.len() - 1
                 }
