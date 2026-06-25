@@ -1,63 +1,65 @@
-import type {Address} from "../stores/configStore";
+import type { Address } from "../stores/configStore";
 
 export function AddressSelector({
-  value,
-  onChange,
+    value,
+    onChange,
 }: {
-  value: Address;
-  onChange: (address: Address) => unknown;
+    value: Address;
+    onChange: (address: Address) => unknown;
 }) {
-  const type = "Long" in value ? "Long" : "Short";
+    const type = "Long" in value ? ("Long" as const) : ("Short" as const);
+    const addressNumber = "Long" in value ? value.Long : value.Short;
 
-  function onChangeWrapped(address: Address) {
-    console.log("On change wrapped", address);
-    if ("Long" in address) {
-      address.Long &= 0xffff;
-    } else if ("Short" in address) {
-      address.Short &= 0xff;
+    function onChangeWrapped(address: Address) {
+        console.log("On change wrapped", address);
+        if ("Long" in address) {
+            address.Long &= 0xffff;
+        } else if ("Short" in address) {
+            address.Short &= 0xff;
+        }
+        onChange(address);
     }
-    onChange(address);
-  }
 
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 md:gap-4">
-      <label
-        htmlFor="address"
-        className="block text-sm font-semibold text-[var(--sea-ink)]"
-      >
-        Locomotive Address Type
-        <select
-          name="addressType"
-          className="my-2 demo-select"
-          value={type}
-          onChange={(event) => {
-            onChangeWrapped({
-              [event.target.value]: value[type],
-            });
-          }}
-        >
-          <option value="Long">Long</option>
-          <option value="Short">Short</option>
-        </select>
-      </label>
-      <label
-        htmlFor="address-number"
-        className="block text-sm font-semibold text-[var(--sea-ink)]"
-      >
-        Address
-        <input
-          type="text"
-          name="address-number"
-          className="my-2 demo-input"
-          value={value[type].toString(16)}
-          maxLength={type == "Long" ? 4 : 2}
-          onChange={(event) => {
-            onChangeWrapped({
-              [type]: parseInt(event.target.value, 16),
-            });
-          }}
-        />
-      </label>
-    </div>
-  );
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-2 md:gap-4">
+            <label
+                htmlFor="address"
+                className="block text-sm font-semibold text-[var(--sea-ink)]"
+            >
+                Locomotive Address Type
+                <select
+                    name="addressType"
+                    className="my-2 demo-select"
+                    value={type}
+                    onChange={(event) => {
+                        onChangeWrapped({
+                            [event.target.value as "Long" | "Short"]:
+                                addressNumber,
+                        } as Address);
+                    }}
+                >
+                    <option value="Long">Long</option>
+                    <option value="Short">Short</option>
+                </select>
+            </label>
+            <label
+                htmlFor="address-number"
+                className="block text-sm font-semibold text-[var(--sea-ink)]"
+            >
+                Address
+                <input
+                    type="text"
+                    name="address-number"
+                    className="my-2 demo-input"
+                    value={addressNumber.toString(16)}
+                    maxLength={type == "Long" ? 4 : 2}
+                    onChange={(event) => {
+                        onChangeWrapped({
+                            [type]: parseInt(event.target.value, 16),
+                        } as Address);
+                    }}
+                />
+            </label>
+        </div>
+    );
 }

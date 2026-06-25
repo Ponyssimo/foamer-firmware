@@ -1,29 +1,28 @@
-import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
+import { useState } from "react";
+import { Consist } from "../components/Consist";
+import { ErrorBanner } from "../components/ErrorBanner";
+import { FunctionGroup } from "../components/FunctionGroup";
+import { WiThrottleConfig } from "../components/WiThrottleConfig";
 import {
-    configStore,
     BRAKE_START_INDEX,
+    configStore,
     HORN_INDEX,
-    TRIPLE_SWITCHES,
     TRIPLE_SWITCH_FUNCTION_COUNT,
     TRIPLE_SWITCH_START_INDEX,
+    TRIPLE_SWITCHES,
 } from "../stores/configStore";
-import { useSelector } from "@tanstack/react-store";
-import { Consist } from "../components/Consist";
-import { FunctionGroup } from "../components/FunctionGroup";
-import { ErrorBanner } from "../components/ErrorBanner";
-import { WiThrottleConfig } from "../components/WiThrottleConfig";
 //import {greet} from "../../pkg";
 
 export const Route = createFileRoute("/")({ component: App });
 
 function App() {
     const [profileId, setProfileId] = useState(0);
-    const profile = useSelector(
+    const wifiConfig = useSelector(
         configStore,
-        (config) => config.profiles[Number(profileId)],
+        (config) => config.base_config.wifi_config,
     );
-    const wifiConfig = useSelector(configStore, (config) => config.base_config.wifi_config);
 
     return (
         <main className="page-wrap px-4 pb-8 pt-14">
@@ -54,14 +53,18 @@ function App() {
             </section>
             <section className="island-shell mt-8 rounded-2xl p-6">
                 <p className="island-kicker mb-2">Consist</p>
-                <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">Which locomotives should be controlled by this profile?</p>
+                <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">
+                    Which locomotives should be controlled by this profile?
+                </p>
 
                 <Consist profileId={profileId} />
             </section>
 
             <section className="island-shell mt-8 rounded-2xl p-6">
                 <p className="island-kicker mb-2">Inputs</p>
-                <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">What should happen when buttons are pressed?</p>
+                <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">
+                    What should happen when buttons are pressed?
+                </p>
 
                 <div className="flex gap-8 flex-col">
                     <FunctionGroup
@@ -74,7 +77,7 @@ function App() {
                             .map((_, index) => `User ${index + 1}`)
                             .concat(["Bell", "Dynamics"])}
                     />
-    
+
                     <FunctionGroup
                         groupName="Lights"
                         typeLabel={(_name, index) =>
@@ -95,17 +98,15 @@ function App() {
                                 return `${TRIPLE_SWITCH_LABELS[switchId]} ${TRIPLE_SWITCH_POSITION_LABELS[positionId]}`;
                             })}
                     />
-    
+
                     <FunctionGroup
                         groupName="Horn"
-                        typeLabel={(_name, _index) =>
-                            "When horn lever is held"
-                        }
+                        typeLabel={(_name, _index) => "When horn lever is held"}
                         start={HORN_INDEX}
                         profileId={profileId}
                         functions={["Horn lever"]}
                     />
-    
+
                     <FunctionGroup
                         groupName="Brake"
                         typeLabel={(name) => `When brake handle is in ${name}`}
@@ -119,8 +120,10 @@ function App() {
             <section className="island-shell mt-8 rounded-2xl p-6">
                 <p className="island-kicker mb-2">WiFi Configuration</p>
 
-                <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">What WiFi network should be used?</p>
-              
+                <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">
+                    What WiFi network should be used?
+                </p>
+
                 <label
                     htmlFor="ssid"
                     className="block text-sm font-semibold text-[var(--sea-ink)]"
@@ -135,7 +138,8 @@ function App() {
                         onChange={(event) => {
                             configStore.setState((config) => {
                                 config = structuredClone(config);
-                                config.base_config.wifi_config.ssid = event.target.value;
+                                config.base_config.wifi_config.ssid =
+                                    event.target.value;
                                 return config;
                             });
                         }}

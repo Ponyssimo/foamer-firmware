@@ -1,18 +1,16 @@
-import { configStore } from "../stores/configStore";
 import { useSelector } from "@tanstack/react-store";
-
 import type {
-    Hardcoded,
-    Momentary,
-    Label,
     Function,
     FunctionBehavior,
     FunctionConfig,
     FunctionType,
+    Hardcoded,
+    Label,
+    Momentary,
 } from "../stores/configStore";
+import { configStore } from "../stores/configStore";
 
 export function FunctionGroup({
-    groupName,
     start,
     profileId,
     functions,
@@ -22,7 +20,7 @@ export function FunctionGroup({
     groupName: string;
     start: number;
     functions: string[];
-    typeLabel: (string, number) => string;
+    typeLabel: (name: string, index: number) => string;
 }) {
     return functions.map((name, index) => (
         <FunctionSwitch
@@ -51,7 +49,9 @@ const DEFAULT_FUNCTION_BY_TYPE: { [K in FunctionType]: Function } = {
     EmergencyStop: "EmergencyStop",
 };
 
-function getFunctionType(func: Function | null | undefined): FunctionType | null {
+function getFunctionType(
+    func: Function | null | undefined,
+): FunctionType | null {
     func = func ?? null;
     return (
         func &&
@@ -101,7 +101,9 @@ function FunctionSwitch({
         (config) => config.profiles[profileId].functions[index],
     );
 
-    const setFuncConfig = (sentinel: (func: FunctionConfig | null) => FunctionConfig | null) => {
+    const setFuncConfig = (
+        sentinel: (func: FunctionConfig | null) => FunctionConfig | null,
+    ) => {
         configStore.setState((config) => {
             config = structuredClone(config);
             const oldFunc = config.profiles[profileId].functions[index];
@@ -124,7 +126,10 @@ function FunctionSwitch({
                     <select
                         name={id}
                         id={id}
-                        value={getFunctionType(funcConfig?.function ?? null) ?? "null"}
+                        value={
+                            getFunctionType(funcConfig?.function ?? null) ??
+                            "null"
+                        }
                         className="my-2 demo-select"
                         onChange={(event) => {
                             const value = event.target.value as
@@ -134,17 +139,21 @@ function FunctionSwitch({
                                 value == "null"
                                     ? null
                                     : DEFAULT_FUNCTION_BY_TYPE[value];
-                          setFuncConfig((funcConfig) => {
-                            if (defaultType) {
-                              if (!funcConfig) {
-                                funcConfig = {behavior: "All", function: null as never};
-                              }
-                              funcConfig.function = structuredClone(defaultType)
-                            } else {
-                              funcConfig = null;
-                            }
-                            return funcConfig;
-                          });
+                            setFuncConfig((funcConfig) => {
+                                if (defaultType) {
+                                    if (!funcConfig) {
+                                        funcConfig = {
+                                            behavior: "All",
+                                            function: null as never,
+                                        };
+                                    }
+                                    funcConfig.function =
+                                        structuredClone(defaultType);
+                                } else {
+                                    funcConfig = null;
+                                }
+                                return funcConfig;
+                            });
                         }}
                     >
                         {(
@@ -176,11 +185,14 @@ function FunctionSwitch({
                             min={0}
                             max={31}
                             onChange={(event) => {
-                              setFuncConfig((_) => {
-                                    const newFuncConfig = structuredClone(funcConfig) as FunctionConfig & {function: Hardcoded};
-                                    newFuncConfig.function.Hardcoded.id = parseInt(
-                                        event.target.value,
-                                    );
+                                setFuncConfig((_) => {
+                                    const newFuncConfig = structuredClone(
+                                        funcConfig,
+                                    ) as FunctionConfig & {
+                                        function: Hardcoded;
+                                    };
+                                    newFuncConfig.function.Hardcoded.id =
+                                        parseInt(event.target.value, 10);
                                     return newFuncConfig;
                                 });
                             }}
@@ -201,15 +213,19 @@ function FunctionSwitch({
                             className="my-2 demo-input"
                             onChange={(event) => {
                                 setFuncConfig((_) => {
-                                    const newFuncConfig = structuredClone(funcConfig) as FunctionConfig & {function: Label};
-                                    newFuncConfig.function.Label.label = event.target.value;
+                                    const newFuncConfig = structuredClone(
+                                        funcConfig,
+                                    ) as FunctionConfig & { function: Label };
+                                    newFuncConfig.function.Label.label =
+                                        event.target.value;
                                     return newFuncConfig;
                                 });
                             }}
                         />
                     </label>
                 )}
-                {(isLabel(funcConfig?.function) || isHardcoded(funcConfig?.function)) && (
+                {(isLabel(funcConfig?.function) ||
+                    isHardcoded(funcConfig?.function)) && (
                     <label className="items-center cursor-pointer">
                         <div className="block text-sm font-semibold text-[var(--sea-ink)]">
                             Keep function active while pressed?
@@ -220,7 +236,10 @@ function FunctionSwitch({
                                     <input
                                         type="checkbox"
                                         className="sr-only peer"
-                                        checked={getMomentary(funcConfig.function).momentary}
+                                        checked={
+                                            getMomentary(funcConfig.function)
+                                                .momentary
+                                        }
                                         name={`${id}-momentary`}
                                         onChange={(event) => {
                                             setFuncConfig((_) => {
@@ -229,7 +248,9 @@ function FunctionSwitch({
                                                 const value =
                                                     event.target.checked;
                                                 getMomentary(
-                                                  newFuncConfig.function as (Hardcoded | Label),
+                                                    newFuncConfig.function as
+                                                        | Hardcoded
+                                                        | Label,
                                                 ).momentary = value;
                                                 return newFuncConfig;
                                             });
@@ -242,55 +263,55 @@ function FunctionSwitch({
                     </label>
                 )}
 
-              {funcConfig && (
-                <label
-                  htmlFor={`${id}-behavior`}
-                    className="block text-sm font-semibold text-[var(--sea-ink)]"
-                >
-                    On:
-                    <select
-                      name={`${id}-behavior`}
-                      id={`${id}-behavior`}
-                        value={funcConfig.behavior}
-                        className="my-2 demo-select"
-                        onChange={(event) => {
-                            const value = event.target.value as
-                                | FunctionBehavior
-                          setFuncConfig((_) => {
-                            const newFuncConfig = structuredClone(funcConfig);
-                            newFuncConfig.behavior = value;
-                            return newFuncConfig;
-                          });
-                        }}
+                {funcConfig && (
+                    <label
+                        htmlFor={`${id}-behavior`}
+                        className="block text-sm font-semibold text-[var(--sea-ink)]"
                     >
-                        {(
-                            [
-                                "All",
-                                "Leading",
-                                "Trailing",
-                                "Last",
-                                "Inner",
-                            ] as const
-                        ).map((name) => (
-                            <option value={name} key={name}>
-                                {NICE_BEHAVIOR_LABELS[name]}
-                            </option>
-                        ))}
-                    </select>
-                </label>
-              )}
+                        On:
+                        <select
+                            name={`${id}-behavior`}
+                            id={`${id}-behavior`}
+                            value={funcConfig.behavior}
+                            className="my-2 demo-select"
+                            onChange={(event) => {
+                                const value = event.target
+                                    .value as FunctionBehavior;
+                                setFuncConfig((_) => {
+                                    const newFuncConfig =
+                                        structuredClone(funcConfig);
+                                    newFuncConfig.behavior = value;
+                                    return newFuncConfig;
+                                });
+                            }}
+                        >
+                            {(
+                                [
+                                    "All",
+                                    "Leading",
+                                    "Trailing",
+                                    "Last",
+                                    "Inner",
+                                ] as const
+                            ).map((name) => (
+                                <option value={name} key={name}>
+                                    {NICE_BEHAVIOR_LABELS[name]}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                )}
             </div>
         </section>
     );
 }
 
-
 const NICE_BEHAVIOR_LABELS: Record<FunctionBehavior, string> = {
-  All: "All units",
-  Leading: "Leading unit only",
-  Trailing: "Trailing units only",
-  Last: "Last unit only",
-  Inner: "Inner units only",
+    All: "All units",
+    Leading: "Leading unit only",
+    Trailing: "Trailing units only",
+    Last: "Last unit only",
+    Inner: "Inner units only",
 };
 
 const NICE_LABELS: Record<FunctionType | "null", string> = {

@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
-import { configStore } from "../stores/configStore";
 import type { WiThrottleDiscovery } from "../stores/configStore";
+import { configStore } from "../stores/configStore";
 
 function isHardcoded(
     discovery: WiThrottleDiscovery,
@@ -20,8 +20,10 @@ export function WiThrottleConfig() {
                 WiThrottle Server Configuration
             </p>
 
-            <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">Which WiThrottle server should be used?</p>
-          
+            <p className="m-0 max-w-3xl text-base leading-8 text-[var(--sea-ink-soft)] my-2">
+                Which WiThrottle server should be used?
+            </p>
+
             <label
                 htmlFor="discovery"
                 className="block text-sm font-semibold text-[var(--sea-ink)]"
@@ -36,11 +38,13 @@ export function WiThrottleConfig() {
                         configStore.setState((config) => {
                             config = structuredClone(config);
                             if (event.target.value == "Hardcoded") {
-                                config.base_config.withrottle_server.discovery = {
-                                    Hardcoded: "192.0.2.69:12090",
-                                };
+                                config.base_config.withrottle_server.discovery =
+                                    {
+                                        Hardcoded: "192.0.2.69:12090",
+                                    };
                             } else if (event.target.value == "Mdns") {
-                                config.base_config.withrottle_server.discovery = "Mdns";
+                                config.base_config.withrottle_server.discovery =
+                                    "Mdns";
                             }
                             return config;
                         });
@@ -67,9 +71,10 @@ export function WiThrottleConfig() {
                         onChange={(event) => {
                             configStore.setState((config) => {
                                 config = structuredClone(config);
-                                config.base_config.withrottle_server.discovery = {
-                                    Hardcoded: event.target.value,
-                                };
+                                config.base_config.withrottle_server.discovery =
+                                    {
+                                        Hardcoded: event.target.value,
+                                    };
                                 return config;
                             });
                         }}

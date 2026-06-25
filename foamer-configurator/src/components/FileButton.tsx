@@ -1,7 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
+import type { Config } from "../stores/configStore";
 import { configStore } from "../stores/configStore";
 import { errorStore } from "../stores/errorStore";
-import type { Config } from "../stores/configStore";
 
 export default function FileButton() {
     const config = useSelector(configStore, (config) => config);
@@ -37,15 +37,15 @@ export default function FileButton() {
                                 return;
                             }
                             const reader = new FileReader();
-                            reader.addEventListener("load", (readerEvent) => {
+                            reader.addEventListener("load", (_) => {
                                 let config: Config;
                                 try {
                                     config = JSON.parse(
-                                        readerEvent.target!.result as string,
+                                        reader.result as string,
                                     );
                                 } catch (err) {
                                     console.error("Bad config file!", err);
-                                    alert("Invalid config file... " + err);
+                                    alert(`Invalid config file... ${err}`);
                                     event.target.value = "";
                                     return;
                                 }

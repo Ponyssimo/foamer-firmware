@@ -1,34 +1,34 @@
-import { useEffect, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
-import { deviceStore } from "../stores/deviceStore";
+import { useEffect } from "react";
+import type { Config } from "../stores/configStore";
 import { configStore } from "../stores/configStore";
+import { deviceStore } from "../stores/deviceStore";
 import { errorStore } from "../stores/errorStore";
 import { wasmPromise } from "../wasm";
-
-type InControlMessage = { ReadConfig: { length: number } };
-type OutControlMessage = { WriteConfig: { length: number } } | "ReadConfig";
 
 const INTERFACE_NUMBER = 1;
 const ENDPOINT_NUMBER = 1;
 
 function getPacketSize(device: USBDevice): number {
-    const inEndpoint = device.configuration.interfaces
-        .find((iface) => iface.interfaceNumber == INTERFACE_NUMBER)
+    const inEndpoint = device
+        .configuration!.interfaces.find(
+            (iface) => iface.interfaceNumber == INTERFACE_NUMBER,
+        )!
         .alternate.endpoints.find(
             (endpoint) =>
                 endpoint.endpointNumber == ENDPOINT_NUMBER &&
                 endpoint.direction == "in",
-        );
+        )!;
     return inEndpoint.packetSize;
 }
 
-async function loadConfig(device: USBDevice): Config {
+async function loadConfig(device: USBDevice): Promise<Config> {
     const wasm = await wasmPromise;
 
     const packetSize = getPacketSize(device);
-    device.transferOut(1, wasm.create_read_request());
+    device.transferOut(1, wasm.create_read_request().slice());
     const transfer = await device.transferIn(ENDPOINT_NUMBER, packetSize);
-    const data = new Uint8Array(transfer.data.buffer);
+    const data = new Uint8Array(transfer.data!.buffer);
     console.log("Data", data);
     const response = JSON.parse(wasm.decode_in_control_message(data));
     console.log("Response", response);
@@ -38,7 +38,7 @@ async function loadConfig(device: USBDevice): Config {
     for (let offset = 0; offset < configLength; offset += packetSize) {
         console.log("Doing another in transfer for", offset);
         const transfer = await device.transferIn(ENDPOINT_NUMBER, packetSize);
-        const data = new Uint8Array(transfer.data.buffer);
+        const data = new Uint8Array(transfer.data!.buffer);
         configBuffer.set(
             data.slice(0, Math.min(data.length, configBuffer.length - offset)),
             offset,
@@ -72,7 +72,7 @@ async function saveConfig(device: USBDevice, config: Config) {
     // const configBuffer = textEncoder.encode(JSON.stringify(config));
     await device.transferOut(
         ENDPOINT_NUMBER,
-        wasm.create_write_request(configBuffer.length),
+        wasm.create_write_request(configBuffer.length).slice(),
     );
 
     for (let offset = 0; offset < configBuffer.length; offset += packetSize) {
@@ -88,9 +88,6 @@ async function saveConfig(device: USBDevice, config: Config) {
 export default function ConnectButton() {
     const error = useSelector(errorStore, (state) => state);
     const device = useSelector(deviceStore, (state) => state?.usbDevice);
-    const label = device
-        ? `Connected to ${device.productName}`
-        : "Disconnected. Click to connect";
 
     useEffect(() => {
         let destroyed = false;
@@ -107,12 +104,12 @@ export default function ConnectButton() {
     }, []);
 
     useEffect(() => {
-        const connectCallback = (event) => {
+        const connectCallback = (event: USBConnectionEvent) => {
             if (!deviceStore.state?.usbDevice) {
                 claimDevice(event.device);
             }
         };
-        const disconnectCallback = (event) => {
+        const disconnectCallback = (event: USBConnectionEvent) => {
             if (event.device) {
                 deviceStore.setState((_) => null);
             }
@@ -168,7 +165,7 @@ export default function ConnectButton() {
                             Load config from device
                         </button>
                         <button
-                            className={"block" + (error ? " text-red-600" : "")}
+                            className={`block${error ? " text-red-600" : ""}`}
                             type="button"
                             disabled={!!error}
                             onClick={() => {
