@@ -6,6 +6,8 @@ import type {
     Momentary,
     Label,
     Function,
+    FunctionBehavior,
+    FunctionConfig,
     FunctionType,
 } from "../stores/configStore";
 
@@ -49,7 +51,8 @@ const DEFAULT_FUNCTION_BY_TYPE: { [K in FunctionType]: Function } = {
     EmergencyStop: "EmergencyStop",
 };
 
-function getFunctionType(func: Function | null): FunctionType | null {
+function getFunctionType(func: Function | null | undefined): FunctionType | null {
+    func = func ?? null;
     return (
         func &&
         ((func == "EmergencyStop" && func) ||
@@ -61,11 +64,11 @@ function getFunctionType(func: Function | null): FunctionType | null {
     );
 }
 
-function isHardcoded(func: Function | null): func is Hardcoded {
+function isHardcoded(func: Function | null | undefined): func is Hardcoded {
     return getFunctionType(func) == "Hardcoded";
 }
 
-function isLabel(func: Function | null): func is Label {
+function isLabel(func: Function | null | undefined): func is Label {
     return getFunctionType(func) == "Label";
 }
 
@@ -93,12 +96,12 @@ function FunctionSwitch({
     profileId: number;
     typeLabel: string;
 }) {
-    const func = useSelector(
+    const funcConfig = useSelector(
         configStore,
         (config) => config.profiles[profileId].functions[index],
     );
 
-    const setFunc = (sentinel: (func: Function | null) => Function | null) => {
+    const setFuncConfig = (sentinel: (func: FunctionConfig | null) => FunctionConfig | null) => {
         configStore.setState((config) => {
             config = structuredClone(config);
             const oldFunc = config.profiles[profileId].functions[index];
@@ -112,7 +115,7 @@ function FunctionSwitch({
     return (
         <section className="island-shell mt-8 rounded-2xl p-6">
             <p className="island-kicker mb-2">{name}</p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <label
                     htmlFor={id}
                     className="block text-sm font-semibold text-[var(--sea-ink)]"
@@ -121,7 +124,7 @@ function FunctionSwitch({
                     <select
                         name={id}
                         id={id}
-                        value={getFunctionType(func) ?? "null"}
+                        value={getFunctionType(funcConfig?.function ?? null) ?? "null"}
                         className="my-2 demo-select"
                         onChange={(event) => {
                             const value = event.target.value as
@@ -131,7 +134,17 @@ function FunctionSwitch({
                                 value == "null"
                                     ? null
                                     : DEFAULT_FUNCTION_BY_TYPE[value];
-                            setFunc((_) => structuredClone(defaultType));
+                          setFuncConfig((funcConfig) => {
+                            if (defaultType) {
+                              if (!funcConfig) {
+                                funcConfig = {behavior: "All", function: null as never};
+                              }
+                              funcConfig.function = structuredClone(defaultType)
+                            } else {
+                              funcConfig = null;
+                            }
+                            return funcConfig;
+                          });
                         }}
                     >
                         {(
@@ -148,7 +161,7 @@ function FunctionSwitch({
                         ))}
                     </select>
                 </label>
-                {isHardcoded(func) && (
+                {isHardcoded(funcConfig?.function) && (
                     <label
                         className="block text-sm font-semibold text-[var(--sea-ink)]"
                         htmlFor={`${id}-hardcoded`}
@@ -158,23 +171,23 @@ function FunctionSwitch({
                             type="number"
                             name={`${id}-hardcoded`}
                             id={`${id}-hardcoded`}
-                            value={func.Hardcoded.id}
+                            value={funcConfig.function.Hardcoded.id}
                             className="my-2 demo-input"
                             min={0}
                             max={31}
                             onChange={(event) => {
-                                setFunc((_) => {
-                                    const newFunc = structuredClone(func);
-                                    newFunc.Hardcoded.id = parseInt(
+                              setFuncConfig((_) => {
+                                    const newFuncConfig = structuredClone(funcConfig) as FunctionConfig & {function: Hardcoded};
+                                    newFuncConfig.function.Hardcoded.id = parseInt(
                                         event.target.value,
                                     );
-                                    return newFunc;
+                                    return newFuncConfig;
                                 });
                             }}
                         />
                     </label>
                 )}
-                {isLabel(func) && (
+                {isLabel(funcConfig?.function) && (
                     <label
                         className="block text-sm font-semibold text-[var(--sea-ink)]"
                         htmlFor={`${id}-label`}
@@ -184,19 +197,19 @@ function FunctionSwitch({
                             type="text"
                             name={`${id}-label`}
                             id={`${id}-label`}
-                            value={func.Label.label}
+                            value={funcConfig.function.Label.label}
                             className="my-2 demo-input"
                             onChange={(event) => {
-                                setFunc((_) => {
-                                    const newFunc = structuredClone(func);
-                                    newFunc.Label.label = event.target.value;
-                                    return newFunc;
+                                setFuncConfig((_) => {
+                                    const newFuncConfig = structuredClone(funcConfig) as FunctionConfig & {function: Label};
+                                    newFuncConfig.function.Label.label = event.target.value;
+                                    return newFuncConfig;
                                 });
                             }}
                         />
                     </label>
                 )}
-                {(isLabel(func) || isHardcoded(func)) && (
+                {(isLabel(funcConfig?.function) || isHardcoded(funcConfig?.function)) && (
                     <label className="items-center cursor-pointer">
                         <div className="block text-sm font-semibold text-[var(--sea-ink)]">
                             Keep function active while pressed?
@@ -207,18 +220,18 @@ function FunctionSwitch({
                                     <input
                                         type="checkbox"
                                         className="sr-only peer"
-                                        checked={getMomentary(func).momentary}
+                                        checked={getMomentary(funcConfig.function).momentary}
                                         name={`${id}-momentary`}
                                         onChange={(event) => {
-                                            setFunc((_) => {
-                                                const newFunc =
-                                                    structuredClone(func);
+                                            setFuncConfig((_) => {
+                                                const newFuncConfig =
+                                                    structuredClone(funcConfig);
                                                 const value =
                                                     event.target.checked;
                                                 getMomentary(
-                                                    newFunc,
+                                                  newFuncConfig.function as (Hardcoded | Label),
                                                 ).momentary = value;
-                                                return newFunc;
+                                                return newFuncConfig;
                                             });
                                         }}
                                     />
@@ -228,12 +241,57 @@ function FunctionSwitch({
                         </div>
                     </label>
                 )}
+
+              {funcConfig && (
+                <label
+                  htmlFor={`${id}-behavior`}
+                    className="block text-sm font-semibold text-[var(--sea-ink)]"
+                >
+                    On:
+                    <select
+                      name={`${id}-behavior`}
+                      id={`${id}-behavior`}
+                        value={funcConfig.behavior}
+                        className="my-2 demo-select"
+                        onChange={(event) => {
+                            const value = event.target.value as
+                                | FunctionBehavior
+                          setFuncConfig((_) => {
+                            const newFuncConfig = structuredClone(funcConfig);
+                            newFuncConfig.behavior = value;
+                            return newFuncConfig;
+                          });
+                        }}
+                    >
+                        {(
+                            [
+                                "All",
+                                "Leading",
+                                "Trailing",
+                                "Inner",
+                            ] as const
+                        ).map((name) => (
+                            <option value={name} key={name}>
+                                {NICE_BEHAVIOR_LABELS[name]}
+                            </option>
+                        ))}
+                    </select>
+                </label>
+              )}
             </div>
         </section>
     );
 }
 
-const NICE_LABELS: { [K in FunctionType | "null"]: string } = {
+
+const NICE_BEHAVIOR_LABELS: Record<FunctionBehavior, string> = {
+  All: "All units",
+  Leading: "Leading unit only",
+  Trailing: "Last unit only",
+  Inner: "Inner units only",
+};
+
+const NICE_LABELS: Record<FunctionType | "null", string> = {
     Label: "Function by Roster Name",
     Hardcoded: "Function by DCC ID",
     EmergencyStop: "Emergency Stop",

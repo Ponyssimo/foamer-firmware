@@ -9,7 +9,7 @@ import {
     TRIPLE_SWITCH_START_INDEX,
 } from "../stores/configStore";
 import { useSelector } from "@tanstack/react-store";
-import { AddressSelector } from "../components/AddressSelector";
+import { Consist } from "../components/Consist";
 import { FunctionGroup } from "../components/FunctionGroup";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { WiThrottleConfig } from "../components/WiThrottleConfig";
@@ -23,7 +23,7 @@ function App() {
         configStore,
         (config) => config.profiles[Number(profileId)],
     );
-    const wifiConfig = useSelector(configStore, (config) => config.wifi_config);
+    const wifiConfig = useSelector(configStore, (config) => config.base_config.wifi_config);
 
     return (
         <main className="page-wrap px-4 pb-8 pt-14">
@@ -51,16 +51,7 @@ function App() {
                         ))}
                     </select>
                 </label>
-                <AddressSelector
-                    value={profile.address}
-                    onChange={(value) =>
-                        configStore.setState((config) => {
-                            config = structuredClone(config);
-                            config.profiles[profileId].address = value;
-                            return config;
-                        })
-                    }
-                />
+                <Consist profileId={profileId} />
 
                 <FunctionGroup
                     groupName="Function Buttons"
@@ -129,7 +120,7 @@ function App() {
                         onChange={(event) => {
                             configStore.setState((config) => {
                                 config = structuredClone(config);
-                                config.wifi_config.ssid = event.target.value;
+                                config.base_config.wifi_config.ssid = event.target.value;
                                 return config;
                             });
                         }}
@@ -150,7 +141,7 @@ function App() {
                         onChange={(event) => {
                             configStore.setState((config) => {
                                 config = structuredClone(config);
-                                config.wifi_config.password =
+                                config.base_config.wifi_config.password =
                                     event.target.value || null;
                                 return config;
                             });

@@ -6,7 +6,7 @@ use embassy_rp::flash::{Flash, Instance, Mode};
 use embassy_rp::peripherals::FLASH;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Receiver;
-use foamer_types::Config;
+use foamer_types::{Config, deserialize_config};
 use heapless::Vec;
 use static_cell::StaticCell;
 
@@ -23,9 +23,10 @@ unsafe extern "C" {
 
 pub fn read_config<'d, T: Instance, M: Mode, const FLASH_SIZE: usize>(
     _flash: &mut Flash<'d, T, M, FLASH_SIZE>,
-) -> Result<Config, postcard::Error> {
+    out_config: &mut Config,
+) -> Result<(), postcard::Error> {
     // Safety: We hold the one and only Flash instance
-    postcard::from_bytes(unsafe { &PERSONALIZATION_SECTOR })
+    deserialize_config(unsafe { &PERSONALIZATION_SECTOR }, out_config)
 }
 
 #[derive(Format)]
@@ -66,14 +67,14 @@ pub async fn flash_task(
                         remote_config_buffer.len()
                     );
 
-                    let new_config: Config = match postcard::from_bytes(&remote_config_buffer[0..config_length]) {
-                        Ok(new_config) => new_config,
-                        Err(err) => {
-                            // TODO: Mary bubble the error back up to the client
-                            defmt::error!("Bad config: {}", err);
-                            continue;
-                        }
-                    };
+                    let mut new_config = Config::default();
+                    if let Err(err) =
+                        deserialize_config(&remote_config_buffer[0..config_length], &mut new_config)
+                    {
+                        // TODO: Mary bubble the error back up to the client
+                        defmt::error!("Bad config: {}", err);
+                        continue;
+                    }
                     defmt::info!("Deserialized config!");
 
                     // Commit!
@@ -87,7 +88,9 @@ pub async fn flash_task(
                         }
                         // Sound because we hold the config lock right now,
                         // they won't be able to get the old config
-                        if config.withrottle_server != new_config.withrottle_server {
+                        if config.base_config.withrottle_server
+                            != new_config.base_config.withrottle_server
+                        {
                             submit_request_sync(WiThrottleRequest::Disconnect);
                         }
                         *config = new_config;
@@ -97,11 +100,13 @@ pub async fn flash_task(
                             PERSONALIZATION_SECTOR.as_ptr() as u32
                                 - &FLASH_START as *const core::ffi::c_void as u32
                         };
-                        defmt::unwrap!(flash.blocking_erase(offset, offset + core::mem::size_of::<PersonalizationSector>() as u32));
-                        defmt::unwrap!(flash.blocking_write(
+                        defmt::unwrap!(flash.blocking_erase(
                             offset,
-                            &remote_config_buffer[0..config_length],
+                            offset + core::mem::size_of::<PersonalizationSector>() as u32
                         ));
+                        defmt::unwrap!(
+                            flash.blocking_write(offset, &remote_config_buffer[0..config_length],)
+                        );
                         defmt::info!("Saved new config!");
                     });
                 }

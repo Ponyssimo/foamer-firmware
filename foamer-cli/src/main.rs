@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use foamer_types::Config;
 use foamer_types::profile_usb_types::{InControlMessage, OutControlMessage};
+use foamer_types::{Config, deserialize_config, serialize_config};
 use nusb::transfer::{Bulk, In, Out};
 use nusb::{MaybeFuture, list_devices};
 use serde::Deserialize;
@@ -37,11 +37,9 @@ enum Action {
 fn deserialize_json<'de, T: Deserialize<'de>>(slice: &'de [u8]) -> anyhow::Result<T> {
     let deserializer = &mut serde_json::Deserializer::from_slice(slice);
     serde_path_to_error::deserialize(deserializer).map_err(|err| {
-        anyhow::anyhow!(
-            "Failed to parse {}: {}",
-            err.path().to_string(),
-            err.into_inner()
-        )
+        // Needed because err.into_inner() takes ownership
+        let path = err.path().to_string();
+        anyhow::anyhow!("Failed to parse {}: {}", path, err.into_inner())
     })
 }
 
@@ -67,15 +65,17 @@ fn handle_usb(action: Action) -> anyhow::Result<()> {
     let device = device_info.open().wait()?;
     let interface = device.claim_interface(1).wait()?;
 
+    const TRANSFER_SIZE: usize = 64;
     let mut writer = interface
         .endpoint::<Bulk, Out>(0x01)
         .context("Writer")?
-        .writer(64);
+        .writer(TRANSFER_SIZE)
+        .with_num_transfers(4);
     let mut reader = interface
         .endpoint::<Bulk, In>(0x81)
         .context("Reader")?
-        .reader(64);
-    let mut buf = [0; 64];
+        .reader(TRANSFER_SIZE);
+    let mut buf = [0; TRANSFER_SIZE];
 
     match action {
         Action::Dump { output_file } => {
@@ -95,8 +95,9 @@ fn handle_usb(action: Action) -> anyhow::Result<()> {
             reader
                 .read_exact(&mut allocation)
                 .context("Reading config chunk stream")?;
-            let config: Config =
-                postcard::from_bytes(&allocation).context("Deserializing received config")?;
+            let mut config: Config = Default::default();
+            deserialize_config(&allocation, &mut config)
+                .context("Deserializing received config")?;
             serde_json::to_writer_pretty(BufWriter::new(file), &config)
                 .context("Writing to config file")?;
             println!("Wrote to {}!", output_file.display());
@@ -106,7 +107,8 @@ fn handle_usb(action: Action) -> anyhow::Result<()> {
             let config = std::fs::read(input_config).context("Reading input config file")?;
             let config: Config = deserialize_json(&config).context("Parsing config file")?;
 
-            let config_bytes = postcard::to_stdvec(&config).context("Serializing config")?;
+            let mut config_bytes: Vec<u8> = Default::default();
+            config_bytes = serialize_config(&config, config_bytes).context("Serializing config")?;
             postcard::to_io(
                 &OutControlMessage::WriteConfig {
                     length: config_bytes.len(),
@@ -116,7 +118,8 @@ fn handle_usb(action: Action) -> anyhow::Result<()> {
             .context("Writing config length command")?;
             writer
                 .write_all(&config_bytes)
-                .context("Writing config chunk to USB")?;
+                .context("Writing config chunks to USB")?;
+            writer.flush().context("Flushing sent config")?;
 
             println!("Sent config over. I don't get any confirmation that it worked.");
             println!("!! Remember wifi settings won't apply until you power cycle !!");

@@ -11,7 +11,7 @@ function isHardcoded(
 export function WiThrottleConfig() {
     const discoveryConfig = useSelector(
         configStore,
-        (config) => config.withrottle_server.discovery,
+        (config) => config.base_config.withrottle_server.discovery,
     );
     const discoveryType = discoveryConfig == "Mdns" ? "Mdns" : "Hardcoded";
     return (
@@ -33,11 +33,11 @@ export function WiThrottleConfig() {
                         configStore.setState((config) => {
                             config = structuredClone(config);
                             if (event.target.value == "Hardcoded") {
-                                config.withrottle_server.discovery = {
+                                config.base_config.withrottle_server.discovery = {
                                     Hardcoded: "192.0.2.69:12090",
                                 };
                             } else if (event.target.value == "Mdns") {
-                                config.withrottle_server.discovery = "Mdns";
+                                config.base_config.withrottle_server.discovery = "Mdns";
                             }
                             return config;
                         });
@@ -64,7 +64,7 @@ export function WiThrottleConfig() {
                         onChange={(event) => {
                             configStore.setState((config) => {
                                 config = structuredClone(config);
-                                config.withrottle_server.discovery = {
+                                config.base_config.withrottle_server.discovery = {
                                     Hardcoded: event.target.value,
                                 };
                                 return config;

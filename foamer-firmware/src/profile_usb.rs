@@ -11,7 +11,7 @@ use embassy_usb::{
     driver::Driver,
     driver::{Endpoint, EndpointError, EndpointIn, EndpointOut},
 };
-use foamer_types::Config;
+use foamer_types::{serialize_config, Config};
 use heapless::Vec;
 
 use crate::flash::FlashCommand;
@@ -96,9 +96,9 @@ impl<'d, D: Driver<'d>> ProfileUsbHandler<'d, D> {
                     defmt::info!("Reading config");
                     // Try 2kB buffer on the stack
                     // You surely will not regret 2kB buffer on the stack
-                    let mut config_buf = [0u8; 2048];
+                    let config_buf: Vec<u8, 2048> = Default::default();
                     let config_buf = critical_section::with(|cs| {
-                        postcard::to_slice(&*self.config.borrow_ref(cs), &mut config_buf)
+                        serialize_config(&self.config.borrow_ref(cs), config_buf)
                     })?;
                     defmt::info!("Config buf is {} bytes", config_buf.len());
                     let buf = postcard::to_slice(
@@ -112,7 +112,7 @@ impl<'d, D: Driver<'d>> ProfileUsbHandler<'d, D> {
                     defmt::info!("Write chunks! {}", config_buf);
                     self.endpoints
                         .write_endpoint
-                        .write_transfer(config_buf, false)
+                        .write_transfer(&config_buf, false)
                         .await?;
                 }
                 msg => {

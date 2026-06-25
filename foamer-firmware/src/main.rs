@@ -44,7 +44,7 @@ use embassy_usb::{
 };
 use embedded_nal_async::TcpConnect;
 use foamer_types::{
-    BRAKE_START_INDEX, BrakeState, Config, HORN_INDEX, TRIPLE_SWITCH_FUNCTION_COUNT,
+    BRAKE_START_INDEX, BrakeState, Config, HORN_INDEX, MU_COUNT, TRIPLE_SWITCH_FUNCTION_COUNT,
     TRIPLE_SWITCH_START_INDEX, TRIPLE_SWITCHES, TripleSwitchState, USER_BUTTONS,
     WiThrottleDiscovery,
 };
@@ -60,6 +60,7 @@ mod buf_reader;
 mod flash;
 mod profile_usb;
 mod rotary_switch;
+mod string_collection;
 mod triple_switch;
 mod withrottle;
 
@@ -439,15 +440,10 @@ async fn main(spawner: Spawner) {
         );
     static CONFIG: StaticCell<Mutex<RefCell<Config>>> = StaticCell::new();
     defmt::info!("Going to grab the config!");
-    let config = CONFIG.init(Mutex::new(RefCell::new(
-        match flash::read_config(&mut flash) {
-            Ok(config) => config,
-            Err(err) => {
-                defmt::error!("Invalid config! Giving a default instead... {}", err);
-                Default::default()
-            }
-        },
-    )));
+    let config = CONFIG.init(Mutex::new(RefCell::new(Default::default())));
+    if let Err(err) = flash::read_config(&mut flash, config.get_mut().get_mut()) {
+        defmt::error!("Invalid config! Giving a default instead... {}", err);
+    }
 
     // Start wifi stuff:
 
@@ -575,7 +571,7 @@ async fn main(spawner: Spawner) {
         seed,
     );
 
-    let wifi_config = config.get_mut().get_mut().wifi_config.clone();
+    let wifi_config = config.get_mut().get_mut().base_config.wifi_config.clone();
 
     static FLASH_CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, FlashCommand, 1>> =
         StaticCell::new();
@@ -688,9 +684,8 @@ async fn main(spawner: Spawner) {
 
     static LINE_BUFFER: StaticCell<[u8; 4096]> = StaticCell::new();
     let line_buffer = LINE_BUFFER.init([0; 4096]);
-    static ROSTER_BUFFER: StaticCell<heapless::String<4096>> = StaticCell::new();
-    let roster_buffer = ROSTER_BUFFER.init(Default::default());
-    static LOCOMOTIVE_BUFFER: StaticCell<heapless::String<4096>> = StaticCell::new();
+    static LOCOMOTIVE_BUFFER: StaticCell<string_collection::StringCollection<4096, { MU_COUNT }>> =
+        StaticCell::new();
     let locomotive_buffer = LOCOMOTIVE_BUFFER.init(Default::default());
 
     static HEARTBEAT_INTERVAL: Signal<CriticalSectionRawMutex, Duration> = Signal::new();
@@ -703,7 +698,7 @@ async fn main(spawner: Spawner) {
 
         let discovery = critical_section::with(|cs| {
             let config = config.borrow_ref(cs);
-            config.withrottle_server.discovery.clone()
+            config.base_config.withrottle_server.discovery.clone()
         });
 
         let withrottle_server = match discovery {
@@ -759,7 +754,6 @@ async fn main(spawner: Spawner) {
                 profile_index: 0,
             },
             line_buffer,
-            roster_buffer,
             locomotive_buffer,
             &HEARTBEAT_INTERVAL,
         )
