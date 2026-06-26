@@ -16,8 +16,10 @@ jobs:
           persist-credentials: false
       - name: Setup Biome
         uses: biomejs/setup-biome@v2
+        with:
+          working-dir: foamer-configurator
       - name: Run Biome
-        run: biome ci .
+        run: cd foamer-configurator && biome ci .
 
   typecheck:
     runs-on: ubuntu-latest
@@ -28,13 +30,24 @@ jobs:
         uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 26
           cache: "pnpm"
+          cache-dependency-path: foamer-configurator/pnpm-lock.yaml
+      - name: Install wasm-pack
+        run: curl https://wasm-bindgen.github.io/wasm-pack/installer/init.sh -sSf | sh
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: cd foamer-configurator && pnpm install --frozen-lockfile
+      - name: Build
+        run: cd foamer-configurator && pnpm run build
       - name: Typecheck
-        run: pnpm run typecheck
+        run: cd foamer-configurator && pnpm run typecheck
 
