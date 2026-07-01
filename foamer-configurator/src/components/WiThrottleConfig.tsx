@@ -1,6 +1,5 @@
-import { useSelector } from "@tanstack/react-store";
 import type { WiThrottleDiscovery } from "../stores/configStore";
-import { configStore } from "../stores/configStore";
+import { setConfig, useConfig } from "../stores/configStore";
 
 function isHardcoded(
     discovery: WiThrottleDiscovery,
@@ -9,8 +8,7 @@ function isHardcoded(
 }
 
 export function WiThrottleConfig() {
-    const discoveryConfig = useSelector(
-        configStore,
+    const discoveryConfig = useConfig(
         (config) => config.base_config.withrottle_server.discovery,
     );
     const discoveryType = discoveryConfig == "Mdns" ? "Mdns" : "Hardcoded";
@@ -35,7 +33,7 @@ export function WiThrottleConfig() {
                     value={discoveryType}
                     className="my-2 demo-select"
                     onChange={(event) => {
-                        configStore.setState((config) => {
+                        setConfig((config) => {
                             config = structuredClone(config);
                             if (event.target.value == "Hardcoded") {
                                 config.base_config.withrottle_server.discovery =
@@ -69,7 +67,7 @@ export function WiThrottleConfig() {
                         className="my-2 demo-input"
                         value={discoveryConfig.Hardcoded}
                         onChange={(event) => {
-                            configStore.setState((config) => {
+                            setConfig((config) => {
                                 config = structuredClone(config);
                                 config.base_config.withrottle_server.discovery =
                                     {

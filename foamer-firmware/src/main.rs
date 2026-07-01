@@ -571,7 +571,7 @@ async fn main(spawner: Spawner) {
         seed,
     );
 
-    let wifi_config = config.get_mut().get_mut().base_config.wifi_config.clone();
+    let wifi_configs = config.get_mut().get_mut().base_config.wifi_configs.clone();
 
     static FLASH_CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, FlashCommand, 1>> =
         StaticCell::new();
@@ -649,18 +649,20 @@ async fn main(spawner: Spawner) {
         TripleSwitchInputs::new(p.PIN_7, p.PIN_8, p.PIN_9)
     )));
 
-    while let Err(err) = control
-        .join(
-            &wifi_config.ssid,
-            match wifi_config.password {
-                Some(ref password) => JoinOptions::new(password.as_bytes()),
-                None => JoinOptions::new_open(),
-            },
-        )
-        .await
+    let mut wifi_config_iter = wifi_configs.iter().cycle();
+    while let Some(wifi_config) = wifi_config_iter.next()
+        && let Err(err) = control
+            .join(
+                &wifi_config.ssid,
+                match wifi_config.password {
+                    Some(ref password) => JoinOptions::new(password.as_bytes()),
+                    None => JoinOptions::new_open(),
+                },
+            )
+            .await
     {
-        info!("join failed with status={}", err);
-        Timer::after(Duration::from_secs(5)).await;
+        info!("join {} failed with status={}", wifi_config.ssid, err);
+        Timer::after(Duration::from_millis(500)).await;
     }
 
     spawner.spawn(defmt::unwrap!(net_task(runner)));

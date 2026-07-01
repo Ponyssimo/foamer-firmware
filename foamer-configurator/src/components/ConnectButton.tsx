@@ -1,7 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
 import type { Config } from "../stores/configStore";
-import { configStore } from "../stores/configStore";
+import {
+    configStore,
+    configStoreValueToConfig,
+    setConfig,
+} from "../stores/configStore";
 import { deviceStore } from "../stores/deviceStore";
 import { errorStore } from "../stores/errorStore";
 import { wasmPromise } from "../wasm";
@@ -158,7 +162,7 @@ export default function ConnectButton() {
                                 console.log("Loading config from", device);
                                 loadConfig(device).then((config) => {
                                     console.log("Got config", config);
-                                    configStore.setState((_state) => config);
+                                    setConfig(config);
                                 });
                             }}
                         >
@@ -169,7 +173,10 @@ export default function ConnectButton() {
                             type="button"
                             disabled={!!error}
                             onClick={() => {
-                                saveConfig(device, configStore.get());
+                                saveConfig(
+                                    device,
+                                    configStoreValueToConfig(configStore.get()),
+                                );
                             }}
                         >
                             {error

@@ -4,8 +4,7 @@ import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { useEffect } from "react";
 import Footer from "../components/Footer";
 import Header from "../components/Header";
-import type { Config } from "../stores/configStore";
-import { configStore } from "../stores/configStore";
+import { configStore, loadConfig } from "../stores/configStore";
 import { errorStore } from "../stores/errorStore";
 import appCss from "../styles.css?url";
 import { wasmPromise } from "../wasm";
@@ -38,22 +37,19 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         if (!import.meta.env.SSR) {
             const localConfig = localStorage.getItem("config");
-            let initialConfig: Config | undefined;
             if (localConfig) {
-                try {
-                    initialConfig = JSON.parse(localConfig);
-                } catch (err) {
-                    console.error("Failed to parse saved config", err);
-                }
-            }
-            if (initialConfig) {
-                configStore.setState((_) => initialConfig);
+                loadConfig(localConfig);
             }
 
-            const subscription = configStore.subscribe((config) => {
+            const subscription = configStore.subscribe((configStoreValue) => {
+                console.log("New config store value", configStoreValue);
+                if (configStoreValue.type != "Config") {
+                    return;
+                }
+                const config = configStoreValue.data;
                 console.log("Config", structuredClone(config));
+                const configString = JSON.stringify(config);
                 wasmPromise.then((wasm) => {
-                    const configString = JSON.stringify(config);
                     try {
                         wasm.encode_config(configString);
                     } catch (err) {
@@ -64,9 +60,8 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                         return;
                     }
                     errorStore.setState((_) => null);
-
-                    localStorage.setItem("config", configString);
                 });
+                localStorage.config = configString;
             });
             return () => {
                 subscription.unsubscribe();

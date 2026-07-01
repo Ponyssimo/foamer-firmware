@@ -1,4 +1,3 @@
-import { useSelector } from "@tanstack/react-store";
 import type {
     Function,
     FunctionBehavior,
@@ -8,7 +7,7 @@ import type {
     Label,
     Momentary,
 } from "../stores/configStore";
-import { configStore } from "../stores/configStore";
+import { setConfig, useConfig } from "../stores/configStore";
 
 export function FunctionGroup({
     start,
@@ -96,15 +95,14 @@ function FunctionSwitch({
     profileId: number;
     typeLabel: string;
 }) {
-    const funcConfig = useSelector(
-        configStore,
+    const funcConfig = useConfig(
         (config) => config.profiles[profileId].functions[index],
     );
 
     const setFuncConfig = (
         sentinel: (func: FunctionConfig | null) => FunctionConfig | null,
     ) => {
-        configStore.setState((config) => {
+        setConfig((config) => {
             config = structuredClone(config);
             const oldFunc = config.profiles[profileId].functions[index];
             const newFunc = sentinel(oldFunc);

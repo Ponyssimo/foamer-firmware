@@ -1,12 +1,8 @@
-import { useSelector } from "@tanstack/react-store";
 import { AddressSelector } from "../components/AddressSelector";
-import { configStore, MU_COUNT } from "../stores/configStore";
+import { MU_COUNT, setConfig, useConfig } from "../stores/configStore";
 
 export function Consist({ profileId }: { profileId: number }) {
-    const addresses = useSelector(
-        configStore,
-        (config) => config.profiles[profileId].address,
-    );
+    const addresses = useConfig((config) => config.profiles[profileId].address);
 
     return (
         <div>
@@ -19,7 +15,7 @@ export function Consist({ profileId }: { profileId: number }) {
                         <AddressSelector
                             value={addresses[addressId]}
                             onChange={(value) =>
-                                configStore.setState((config) => {
+                                setConfig((config) => {
                                     config = structuredClone(config);
                                     config.profiles[profileId].address[
                                         addressId
@@ -35,7 +31,7 @@ export function Consist({ profileId }: { profileId: number }) {
                                 type="button"
                                 className="demo-button-input text-sm my-2"
                                 onClick={() => {
-                                    configStore.setState((config) => {
+                                    setConfig((config) => {
                                         config = structuredClone(config);
                                         config.profiles[
                                             profileId
@@ -55,7 +51,7 @@ export function Consist({ profileId }: { profileId: number }) {
                 type="button"
                 className="demo-button"
                 onClick={() => {
-                    configStore.setState((config) => {
+                    setConfig((config) => {
                         config = structuredClone(config);
                         config.profiles[profileId].address.push({
                             Long: 0x6969,

@@ -130,7 +130,7 @@ pub enum WiThrottleDiscovery {
 #[derive(Default, Eq, PartialEq, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "defmt", derive(Format))]
 pub struct BaseConfig {
-    pub wifi_config: WifiConfig,
+    pub wifi_configs: Vec<WifiConfig, 5>,
     pub withrottle_server: WiThrottleServerConfiguration,
 }
 

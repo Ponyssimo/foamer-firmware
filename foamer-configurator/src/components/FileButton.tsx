@@ -1,20 +1,22 @@
 import { useSelector } from "@tanstack/react-store";
-import type { Config } from "../stores/configStore";
-import { configStore } from "../stores/configStore";
+import { configStore, loadConfig } from "../stores/configStore";
 import { errorStore } from "../stores/errorStore";
 
 export default function FileButton() {
-    const config = useSelector(configStore, (config) => config);
+    const configStoreValue = useSelector(
+        configStore,
+        (storeValue) => storeValue,
+    );
     const error = useSelector(errorStore, (error) => error);
     return (
         <details className="rounded-full border border-[var(--chip-line)] bg-[var(--chip-bg)] px-3 py-1.5 text-sm font-semibold text-[var(--sea-ink)] shadow-[0_8px_22px_rgba(30,90,72,0.08)] transition hover:-translate-y-0.5">
             <summary>File</summary>
             <div className="mt-2 min-w-56 rounded-xl border border-[var(--line)] bg-[var(--header-bg)] p-2 shadow-lg sm:absolute sm:right-0">
-                {error ? (
+                {error || configStoreValue.type == "ParsingError" ? (
                     <div className="text-red-600">Bad config, can't save</div>
                 ) : (
                     <a
-                        href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(config))}`}
+                        href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(configStoreValue.data))}`}
                         download="config.json"
                         className="cursor-pointer block"
                     >
@@ -38,19 +40,8 @@ export default function FileButton() {
                             }
                             const reader = new FileReader();
                             reader.addEventListener("load", (_) => {
-                                let config: Config;
-                                try {
-                                    config = JSON.parse(
-                                        reader.result as string,
-                                    );
-                                } catch (err) {
-                                    console.error("Bad config file!", err);
-                                    alert(`Invalid config file... ${err}`);
-                                    event.target.value = "";
-                                    return;
-                                }
+                                loadConfig(reader.result as string);
                                 event.target.value = "";
-                                configStore.setState((_) => config);
                             });
                             console.log("Reading file", file);
                             reader.readAsText(file);
