@@ -1,0 +1,10 @@
+pushd foamer-configurator
+pnpm run check
+popd
+
+for f in foamer-firmware foamer-types foamer-cli foamer-configurator; do
+  pushd $f
+  cargo clippy -- -Dwarnings
+  cargo fmt
+  popd
+done

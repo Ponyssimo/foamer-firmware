@@ -2,7 +2,7 @@
 name = "foamer-configurator"
 version = "0.1.0"
 authors = ["Mary Strodl <ipadlover8322@gmail.com>"]
-edition = "2018"
+edition = "2024"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

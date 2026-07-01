@@ -2,7 +2,7 @@ mod utils;
 use crate::utils::set_panic_hook;
 
 use foamer_types::profile_usb_types::{InControlMessage, OutControlMessage};
-use foamer_types::{deserialize_config, serialize_config, Config};
+use foamer_types::{Config, deserialize_config, serialize_config};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -20,14 +20,14 @@ pub fn create_write_request(length: usize) -> Vec<u8> {
 #[wasm_bindgen]
 pub fn decode_in_control_message(message: &[u8]) -> String {
     set_panic_hook();
-    decode_to_json::<InControlMessage>(&message)
+    decode_to_json::<InControlMessage>(message)
 }
 
 #[wasm_bindgen]
 pub fn decode_config(message: &[u8]) -> String {
     set_panic_hook();
     let mut config = Config::default();
-    deserialize_config(&message, &mut config).unwrap();
+    deserialize_config(message, &mut config).unwrap();
     serde_json::to_string(&config).unwrap()
 }
 
@@ -43,6 +43,6 @@ pub fn encode_config(message: &str) -> Result<Vec<u8>, String> {
 
 fn decode_to_json<'a, T: serde::Serialize + serde::Deserialize<'a>>(message: &'a [u8]) -> String {
     let message: T = postcard::from_bytes(message)
-        .expect(&format!("Failed to deserialize message: {message:?}"));
+        .unwrap_or_else(|err| panic!("Failed to deserialize message: {message:?}: {err}"));
     serde_json::to_string(&message).unwrap()
 }
