@@ -1,5 +1,6 @@
 pushd foamer-configurator
 pnpm run check
+pnpm run typecheck
 popd
 
 for f in foamer-firmware foamer-types foamer-cli foamer-configurator defmtusb; do
